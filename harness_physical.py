@@ -42,6 +42,8 @@ def main(args):
         from agent_delay_target import Agent
     elif args.agent_type == 'agent_random':
         from agent_random import Agent
+    elif args.agent_type == 'agent_dqn':
+        from agent_dqn import Agent
     else:
         raise ValueError(f"Invalid agent type={args.agent_type}")
 
@@ -170,11 +172,31 @@ def main(args):
                 logger.debug(f'{num_actions} actions: {action_set}')
 
                 # Init a fresh model.
-                agent_args = {
-                    'ring_buffer_size': 200 * 1024,
-                    "use_model": 3,
-                    "gpu": args.gpu,
-                }
+                if args.agent_type == 'agent_delay_target':
+                    agent_args = {
+                        'ring_buffer_size': 200 * 1024,
+                        "use_model": 3,
+                        "gpu": args.gpu,
+                    }
+                elif args.agent_type == 'agent_dqn':
+                    agent_args = {
+                        "gpu": args.gpu,
+                        "buffer_size": args.dqn_buffer_size,
+                        "batch_size": args.dqn_batch_size,
+                        "learning_rate": args.dqn_learning_rate,
+                        "gamma": args.dqn_gamma,
+                        "train_start": args.dqn_train_start,
+                        "train_freq": args.dqn_train_freq,
+                        "target_update_freq": args.dqn_target_update_freq,
+                        "epsilon_start": args.dqn_epsilon_start,
+                        "epsilon_end": args.dqn_epsilon_end,
+                        "epsilon_decay_frames": args.dqn_epsilon_decay_frames,
+                        "stack_size": args.dqn_stack_size,
+                        "obs_height": args.dqn_obs_height,
+                        "obs_width": args.dqn_obs_width,
+                    }
+                else:
+                    agent_args = {"gpu": args.gpu}
                 if load_model is not None:
                     agent_args["load_file"] = load_model
 
@@ -487,7 +509,7 @@ def get_argument_parser():
         '--agent_type',
         type=str,
         default="agent_delay_target",
-        choices=["agent_delay_target", "agent_random"],
+        choices=["agent_delay_target", "agent_random", "agent_dqn"],
     )
     parser.add_argument(
         '--reduce_action_set',
@@ -505,6 +527,21 @@ def get_argument_parser():
     parser.add_argument(
         '--use_gui', type=int, default=2, choices=[0, 1, 2], help="0=no gui, 1=gui no config step, 2=gui w/ config step"
     )
+
+    # DQN-specific configuration (used when --agent_type=agent_dqn)
+    parser.add_argument('--dqn_buffer_size', type=int, default=100_000)
+    parser.add_argument('--dqn_batch_size', type=int, default=32)
+    parser.add_argument('--dqn_learning_rate', type=float, default=2.5e-4)
+    parser.add_argument('--dqn_gamma', type=float, default=0.99)
+    parser.add_argument('--dqn_train_start', type=int, default=50_000)
+    parser.add_argument('--dqn_train_freq', type=int, default=4)
+    parser.add_argument('--dqn_target_update_freq', type=int, default=10_000)
+    parser.add_argument('--dqn_epsilon_start', type=float, default=1.0)
+    parser.add_argument('--dqn_epsilon_end', type=float, default=0.1)
+    parser.add_argument('--dqn_epsilon_decay_frames', type=int, default=1_000_000)
+    parser.add_argument('--dqn_stack_size', type=int, default=4)
+    parser.add_argument('--dqn_obs_height', type=int, default=84)
+    parser.add_argument('--dqn_obs_width', type=int, default=84)
 
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--load_model', type=str, default=None)
