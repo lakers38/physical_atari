@@ -35,23 +35,35 @@ latency = LatencyModel("latency_wrap")
 
 # There is also a 6-frame delay between the agent picks the action and when the joystick can act on it.
 delayed_actions = [0] * 6
+# This gets the pure RGB observation to act on
 obs = ale.getScreenRGB()
+# Reward initialization
 reward = 0
+# Flag for whether game ended or not
 end_flag = 0
-
+# Looping through the specified number of frames
 for t in range(agent.total_frames):
+    # Adding the action to back of queue to maintain 6 frame delay
     delayed_actions.append(latency.last_action if hasattr(latency, "last_action") else 0)
+    # Get the action at the front of queue
     cmd = delayed_actions.pop(0)
-    print(action_set[cmd])
+    # The sim executes action
     reward = ale.act(int(action_set[cmd]))
-
+    # Next action for agent to take
     frame_action = agent.frame(obs, reward, end_flag)
+    # Action joystick will take based on predicted action
     hw_action = latency.act(Action(frame_action))
+    # Setting next action in queue
     delayed_actions[-1] = action_set.index(hw_action)
 
+    # End/Continue conditions
     if ale.game_over():
         obs = ale.reset_game()
         end_flag = 2
     else:
         obs = ale.getScreenRGB()
         end_flag = 0
+
+
+# You need to include the delayed_actions/latency wrapper logic in your training loop for algorithms you train (DQN, PPO, etc.)
+# In your agent file you'll do the preprocessing necessary (FrameStack, GrayScale, etc.)
