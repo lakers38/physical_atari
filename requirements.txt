@@ -1,6 +1,6 @@
 ale-py==0.10.1
 dearpygui==2.0.0
-dt_apriltags==3.1.7
+# dt_apriltags==3.1.7
 dynamixel_sdk==3.7.31
 libusb1==3.3.1
 msgpack==1.1.0
