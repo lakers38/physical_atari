@@ -25,3 +25,6 @@ pip-delete-this-directory.txt
 results/
 local/
 train_data/
+
+# wandb logs
+wandb/
