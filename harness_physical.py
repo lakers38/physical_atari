@@ -42,6 +42,10 @@ def main(args):
         from agent_delay_target import Agent
     elif args.agent_type == 'agent_ppo':
         from agent_ppo import Agent
+    elif args.agent_type == 'agent_dqn':
+        from agent_dqn import Agent
+    elif args.agent_type == 'agent_rainbow':
+        from agent_rainbow import Agent
     elif args.agent_type == 'agent_random':
         from agent_random import Agent
     elif args.agent_type == 'agent_dqn':
@@ -173,12 +177,28 @@ def main(args):
                 num_actions = len(action_set)
                 logger.debug(f'{num_actions} actions: {action_set}')
 
-                # Init a fresh model.
+                # Init a fresh model with agent-specific configuration
                 if args.agent_type == 'agent_delay_target':
                     agent_args = {
                         'ring_buffer_size': 200 * 1024,
                         "use_model": 3,
                         "gpu": args.gpu,
+                    }
+                elif args.agent_type == 'agent_ppo':
+                    agent_args = {
+                        "gpu": args.gpu,
+                        "learning_rate": args.ppo_learning_rate,
+                        "n_steps": args.ppo_n_steps,
+                        "batch_size": args.ppo_batch_size,
+                        "n_epochs": args.ppo_n_epochs,
+                        "gamma": args.ppo_gamma,
+                        "gae_lambda": args.ppo_gae_lambda,
+                        "clip_range": args.ppo_clip_range,
+                        "ent_coef": args.ppo_ent_coef,
+                        "vf_coef": args.ppo_vf_coef,
+                        "max_grad_norm": args.ppo_max_grad_norm,
+                        "frame_skip": args.ppo_frame_skip,
+                        "resize_to_84": args.ppo_resize_to_84,
                     }
                 elif args.agent_type == 'agent_dqn':
                     agent_args = {
@@ -199,6 +219,7 @@ def main(args):
                     }
                 else:
                     agent_args = {"gpu": args.gpu}
+
                 if load_model is not None:
                     agent_args["load_file"] = load_model
 
@@ -511,7 +532,7 @@ def get_argument_parser():
         '--agent_type',
         type=str,
         default="agent_delay_target",
-        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_ppo"],
+        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_ppo", "agent_rainbow"],
     )
     parser.add_argument(
         '--reduce_action_set',
@@ -559,6 +580,20 @@ def get_argument_parser():
     parser.add_argument('--capture_frames', action='store_true', help="generate a raw movie of run")
     # REVIEW: only used for testing ale_env within the harness
     parser.add_argument('--delay_frames', type=int, default=0)
+
+    # PPO-specific configuration (used when --agent_type=agent_ppo)
+    parser.add_argument('--ppo_learning_rate', type=float, default=2.5e-4, help="PPO learning rate")
+    parser.add_argument('--ppo_n_steps', type=int, default=128, help="PPO steps per update")
+    parser.add_argument('--ppo_batch_size', type=int, default=256, help="PPO minibatch size")
+    parser.add_argument('--ppo_n_epochs', type=int, default=4, help="PPO epochs per update")
+    parser.add_argument('--ppo_gamma', type=float, default=0.99, help="PPO discount factor")
+    parser.add_argument('--ppo_gae_lambda', type=float, default=0.95, help="PPO GAE lambda")
+    parser.add_argument('--ppo_clip_range', type=float, default=0.1, help="PPO clip range")
+    parser.add_argument('--ppo_ent_coef', type=float, default=0.01, help="PPO entropy coefficient")
+    parser.add_argument('--ppo_vf_coef', type=float, default=0.5, help="PPO value function coefficient")
+    parser.add_argument('--ppo_max_grad_norm', type=float, default=0.5, help="PPO max gradient norm")
+    parser.add_argument('--ppo_frame_skip', type=int, default=4, help="PPO frame skip (agent acts every N frames)")
+    parser.add_argument('--ppo_resize_to_84', type=int, default=1, choices=[0, 1], help="PPO resize to 84x84 (1=yes, 0=no)")
     return parser
 
 
