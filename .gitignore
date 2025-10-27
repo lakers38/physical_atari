@@ -28,3 +28,6 @@ train_data/
 wandb/
 videos/
 
+test_outputs/
+outputs/
+.claude/

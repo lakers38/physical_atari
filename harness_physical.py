@@ -40,6 +40,8 @@ def main(args):
     logger.info(f"Importing agent: {args.agent_type}")
     if args.agent_type == 'agent_delay_target':
         from agent_delay_target import Agent
+    elif args.agent_type == 'agent_ppo':
+        from agent_ppo import Agent
     elif args.agent_type == 'agent_random':
         from agent_random import Agent
     elif args.agent_type == 'agent_dqn':
@@ -509,7 +511,7 @@ def get_argument_parser():
         '--agent_type',
         type=str,
         default="agent_delay_target",
-        choices=["agent_delay_target", "agent_random", "agent_dqn"],
+        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_ppo"],
     )
     parser.add_argument(
         '--reduce_action_set',

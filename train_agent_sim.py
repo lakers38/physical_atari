@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Phase 2: Train PPO agent in Gymnasium with simulated hardware latency
+Train PPO agent in Gymnasium with optional hardware latency simulation
 
-This script trains a PPO agent on Atari games using the LatencyModel to simulate
-the real-world action delay that occurs with the physical Robotroller hardware.
+This script trains a PPO agent on Atari games with two modes:
+- sim: Pure simulation (no latency) - fast baseline training
+- sim_lat: Simulation with LatencyModel - simulates real hardware delays
 
-Flow:
+Flow (sim_lat mode):
     obs = env.step()
     action = PPO.predict(obs)
     delayed_action = LatencyModel.act(action)  # Simulates hardware latency
@@ -16,11 +17,11 @@ import argparse
 import os
 import sys
 from datetime import datetime
-from typing import Optional
 
 import gymnasium as gym
 import ale_py
 import numpy as np
+from coolname import generate_slug
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack, VecMonitor, VecVideoRecorder
@@ -189,7 +190,7 @@ def create_atari_env_with_latency(
     # Apply latency wrapper BEFORE frame stacking
     # This ensures the latency affects the raw actions
     if simulate_latency:
-        print(f"[Phase 2] Applying latency simulation to {env_name}")
+        print(f"[sim_lat] Applying latency simulation to {env_name}")
         env = VecLatencyWrapper(env, latency_model_dir=latency_model_dir)
 
     # Apply frame stacking (4 frames)
@@ -231,7 +232,7 @@ def train_agent(
     video_freq=10000,
     video_length=500,
     use_wandb=False,
-    wandb_project="physical-atari-phase2",
+    wandb_project="physical-atari",
     wandb_entity=None,
     wandb_run_name=None
 ):
@@ -284,7 +285,8 @@ def train_agent(
                 "vf_coef": 0.5,
                 "device": device,
                 "algorithm": "PPO",
-                "phase": "Phase 2 - Latency" if simulate_latency else "Phase 1 - No Latency",
+                "training_mode": "sim_lat" if simulate_latency else "sim",
+                "latency_enabled": simulate_latency,
             }
 
             wandb_run = wandb.init(
@@ -358,8 +360,8 @@ def train_agent(
 
     # Setup callbacks
     timestamp = os.path.basename(experiment_dir) if experiment_dir else datetime.now().strftime("%Y%m%d_%H%M%S")
-    phase = "Phase2_Latency" if simulate_latency else "Phase1_NoLatency"
-    model_name = f"PPO_{phase}_{env_name.replace('/', '_')}_{timestamp}"
+    mode = "sim_lat" if simulate_latency else "sim"
+    model_name = f"PPO_{mode}_{env_name.replace('/', '_')}_{timestamp}"
 
     model_save_path = os.path.join(experiment_dir, "models", "final_model") if experiment_dir else f"./models/{model_name}"
 
@@ -391,8 +393,9 @@ def train_agent(
         print(f"[WandB] Callback added - models will be uploaded")
 
     # Train the model
+    mode_name = "sim_lat (with LatencyModel)" if simulate_latency else "sim (no latency)"
     print(f"\n{'='*60}")
-    print(f"Starting Phase 2 Training: PPO with Latency Simulation")
+    print(f"Starting Training: {mode_name}")
     print(f"{'='*60}")
     print(f"Environment: {env_name}")
     print(f"Total timesteps: {total_timesteps:,}")
@@ -424,7 +427,7 @@ def train_agent(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Phase 2: Train PPO agent with simulated hardware latency"
+        description="Train PPO agent in Gymnasium simulation with optional latency"
     )
     parser.add_argument(
         "--env",
@@ -439,9 +442,11 @@ def main():
         help="Total training timesteps (default: 1M)"
     )
     parser.add_argument(
-        "--no-latency",
-        action="store_true",
-        help="Train WITHOUT latency simulation (Phase 1)"
+        "--mode",
+        type=str,
+        default="sim_lat",
+        choices=["sim", "sim_lat"],
+        help="Training mode: sim (no latency) or sim_lat (with LatencyModel, default)"
     )
     parser.add_argument(
         "--latency-model-dir",
@@ -511,8 +516,8 @@ def main():
     parser.add_argument(
         "--wandb-project",
         type=str,
-        default="physical-atari-phase2",
-        help="WandB project name (default: physical-atari-phase2)"
+        default="physical-atari",
+        help="WandB project name (default: physical-atari)"
     )
     parser.add_argument(
         "--wandb-entity",
@@ -520,20 +525,15 @@ def main():
         default=None,
         help="WandB entity/team name (default: your username)"
     )
-    parser.add_argument(
-        "--wandb-run-name",
-        type=str,
-        default=None,
-        help="WandB run name (default: auto-generated)"
-    )
-
     args = parser.parse_args()
 
-    # Create experiment directory
+    # Generate run name (mode-name-timestamp)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    phase = "Phase1" if args.no_latency else "Phase2_Latency"
+    run_name = f"{args.mode}-{generate_slug(2)}-{timestamp}"
+
+    # Create experiment directory using run_name
     env_dir_name = args.env.replace('/', '_')
-    experiment_dir = os.path.join(args.output_dir, phase, env_dir_name, timestamp)
+    experiment_dir = os.path.join(args.output_dir, args.mode, env_dir_name, run_name)
 
     # Create directory structure
     os.makedirs(os.path.join(experiment_dir, "logs", "tensorboard"), exist_ok=True)
@@ -546,10 +546,11 @@ def main():
     # Save configuration
     config_path = os.path.join(experiment_dir, "config.txt")
     with open(config_path, "w") as f:
-        f.write(f"Phase: {phase}\n")
+        f.write(f"Run name: {run_name}\n")
+        f.write(f"Training mode: {args.mode}\n")
         f.write(f"Environment: {args.env}\n")
         f.write(f"Total timesteps: {args.timesteps}\n")
-        f.write(f"Latency simulation: {not args.no_latency}\n")
+        f.write(f"Latency simulation: {args.mode == 'sim_lat'}\n")
         f.write(f"Device: {args.device}\n")
         f.write(f"Learning rate: {args.learning_rate}\n")
         f.write(f"N steps: {args.n_steps}\n")
@@ -565,7 +566,7 @@ def main():
     model, model_path = train_agent(
         env_name=args.env,
         total_timesteps=args.timesteps,
-        simulate_latency=not args.no_latency,
+        simulate_latency=(args.mode == "sim_lat"),
         latency_model_dir=args.latency_model_dir,
         experiment_dir=experiment_dir,
         device=args.device,
@@ -579,7 +580,7 @@ def main():
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_entity=args.wandb_entity,
-        wandb_run_name=args.wandb_run_name
+        wandb_run_name=run_name
     )
 
     print(f"\n{'='*60}")
