@@ -18,6 +18,7 @@ pip-delete-this-directory.txt
 
 # VS Code / PyCharm / JetBrains
 .vscode/
+.claude/
 .idea/
 AGENTS.md
 CLAUDE.md
@@ -29,10 +30,10 @@ local/
 train_data/
 wandb/
 videos/
-outputs/
-results_sim/
-ppo_outputs/
+**outputs**/
+**results**/
 *.zip
 
+uv.lock
 **/.DS_Store
-**outputs**/
+
