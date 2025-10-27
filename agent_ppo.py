@@ -134,6 +134,11 @@ class Agent:
             else:
                 logger.warning(f"agent_ppo: Unknown parameter {key}")
 
+        # Handle 'load_file' kwarg (harness uses this instead of load_model_path)
+        if 'load_file' in kwargs:
+            self.load_model_path = kwargs['load_file']
+            logger.info(f"agent_ppo: Set load_model_path from load_file = {self.load_model_path}")
+
         # Frame buffering (stack 4 frames)
         self.frame_buffer = deque(maxlen=4)
         self.step_count = 0
@@ -200,6 +205,7 @@ class Agent:
         # Training tracking
         self.training_step = 0
         self.frames_since_train = 0
+        self.train_losses = []  # Required by harness_physical.py
 
         logger.info(f"agent_ppo: Initialized successfully")
 
@@ -271,6 +277,24 @@ class Agent:
                     reset_num_timesteps=False,
                     callback=self.checkpoint_callback
                 )
+
+                # Extract loss from PPO logger for harness compatibility
+                # PPO tracks loss in its logger after training
+                try:
+                    if hasattr(self.ppo_model, 'logger') and self.ppo_model.logger is not None:
+                        # Try to get loss from logger's name_to_value dict
+                        if hasattr(self.ppo_model.logger, 'name_to_value'):
+                            loss = self.ppo_model.logger.name_to_value.get('train/loss', 0.0)
+                            self.train_losses.append(float(loss))
+                        else:
+                            # Fallback: append 0 to maintain list length
+                            self.train_losses.append(0.0)
+                    else:
+                        self.train_losses.append(0.0)
+                except Exception as loss_err:
+                    logger.debug(f"agent_ppo: Could not extract loss: {loss_err}")
+                    self.train_losses.append(0.0)
+
             except Exception as e:
                 logger.error(f"agent_ppo: Training error: {e}")
 
