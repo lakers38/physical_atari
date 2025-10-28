@@ -1,1 +1,0 @@
-{"loss":0,"_wandb":{"runtime":19},"avg_q":-0.009304539300501347,"max_q":0.03200799599289894,"frames":9940,"episode":5,"episode_reward":220,"loss_ema":0,"_step":9940,"_runtime":19.304006917,"_timestamp":1.761259965176351e+09,"epsilon":0.9910531,"fps":579.3122134226068}
