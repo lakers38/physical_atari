@@ -12,7 +12,6 @@ from typing import Deque, List, Optional
 from collections import deque
 
 from agent_utils import preprocess_batch
-from latency_wrap.wrapper_v0_2 import total
 from vector_agents import VectorAgent
 
 
@@ -249,66 +248,79 @@ class DQNCore:
 
     # Single-env adapter (for harness_physical + sim_latency)
 
-    class Agent:
-        def __init__(self, data_dir=None, seed=0, num_actions=18, total_frames=1_000_000, **kwargs):
-            self.core = DQNCore(
-                num_envs=1, data_dir=data_dir, seed=seed, num_actions=num_actions, total_frames=total_frames, **kwargs
+
+class Agent:
+    def __init__(self, data_dir=None, seed=0, num_actions=18, total_frames=1_000_000, **kwargs):
+        self.core = DQNCore(
+            num_envs=1, data_dir=data_dir, seed=seed, num_actions=num_actions, total_frames=total_frames, **kwargs
+        )
+        self.prev_obs: Optional[np.ndarray] = None
+        self.prev_reward = 0.0
+        self.prev_done = False
+
+    def frame(self, observation_rgb8, reward, end_of_episode):
+        obs_batch = observation_rgb8[None, ...]
+        if self.prev_obs is None:
+            self.core.reset(obs_batch)
+        actions = self.core.act(obs_batch)
+        if self.prev_obs is not None:
+            self.core.observe(
+                self.prev_obs,
+                np.array([self.prev_reward]),
+                np.array([self.prev_done]),
+                np.array([False]),
             )
-            self.prev_obs: Optional[np.ndarray] = None
-            self.prev_reward = 0.0
-            self.prev_done = False
+            self.core.train_step()
+        self.prev_obs = observation_rgb8[None, ...]
+        self.prev_reward = reward
+        self.prev_done = bool(end_of_episode > 0)
+        return int(actions[0])
 
-        def frame(self, observation_rgb8, reward, end_of_episode):
-            obs_batch = observation_rgb8[None, ...]
-            if self.prev_obs is None:
-                self.core.reset(obs_batch)
-            actions = self.core.act(obs_batch)
-            if self.prev_obs is not None:
-                self.core.observe(
-                    self.prev_obs,
-                    np.array([self.prev_reward]),
-                    np.array([self.prev_done]),
-                    np.array([False]),
-                )
-                self.core.train_step()
-            self.prev_obs = observation_rgb8[None, ...]
-            self.prev_reward = reward
-            self.prev_done = bool(end_of_episode > 0)
-            return int(actions[0])
+    def save_model(self, path: str) -> None:
+        self.core.save_model(path)
 
-        def save_model(self, path: str) -> None:
-            self.core.save_model(path)
+    def load_model(self, path: str) -> None:
+        self.core.load_model(path)
 
-        def load_model(self, path: str) -> None:
-            self.core.load_model(path)
 
-    # Vectorized adapter (for future vector trainer)
+# Vectorized adapter (for future vector trainer)
 
-    class VectorDQNAgent(VectorAgent):
-        def __init__(self, results_dir, seed, num_actions, total_frames, **kwargs):
-            self.core = DQNCore(
-                num_envs=kwargs.pop("num_envs"),
-                seed=seed,
-                num_actions=num_actions,
-                total_frames=total_frames,
-                data_dir=results_dir,
-                **kwargs,
-            )
 
-        def reset(self, num_envs: int) -> None:
-            self.num_envs = num_envs
+class VectorDQNAgent(VectorAgent):
+    def __init__(
+        self,
+        *,
+        num_envs: int,
+        seed: int,
+        num_actions: int,
+        results_dir: Optional[str] = None,
+        total_frames: int = 1_000_000,
+        **kwargs,
+    ):
+        self.core = DQNCore(
+            num_envs=num_envs,
+            seed=seed,
+            num_actions=num_actions,
+            total_frames=total_frames,
+            data_dir=results_dir,
+            **kwargs,
+        )
+        self.num_envs = num_envs
 
-        def act(self, observations: np.ndarray) -> np.ndarray:
-            return self.core.act(observations)
+    def reset(self, num_envs: int) -> None:
+        self.num_envs = num_envs
 
-        def observe(self, next_observations, rewards, terminations, truncations, infos):
-            self.core.observe(next_observations, rewards, terminations, truncations)
+    def act(self, observations: np.ndarray) -> np.ndarray:
+        return self.core.act(observations)
 
-        def train_step(self) -> None:
-            return self.core.train_step()
+    def observe(self, next_observations, rewards, terminations, truncations, infos):
+        self.core.observe(next_observations, rewards, terminations, truncations)
 
-        def save_model(self, path: str) -> None:
-            return self.core.save_model(path)
+    def train_step(self) -> None:
+        return self.core.train_step()
 
-        def load_model(self, path: str) -> None:
-            return self.core.load_model(path)
+    def save_model(self, path: str) -> None:
+        return self.core.save_model(path)
+
+    def load_model(self, path: str) -> None:
+        return self.core.load_model(path)
