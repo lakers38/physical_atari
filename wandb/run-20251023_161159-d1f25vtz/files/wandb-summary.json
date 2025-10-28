@@ -1,0 +1,1 @@
+{"episode_reward":300,"episode":3,"epsilon":0.9948205,"_runtime":10.152259792,"fps":680.1315480241726,"_wandb":{"runtime":10},"_timestamp":1.7612611288895612e+09,"frames":5754,"_step":5754,"max_q":0.09584040939807892,"avg_q":0.08444134891033173,"loss":0}

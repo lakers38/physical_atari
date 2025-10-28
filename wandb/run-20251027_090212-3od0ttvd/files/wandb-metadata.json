@@ -1,0 +1,56 @@
+{
+  "os":  "macOS-15.6-arm64-arm-64bit",
+  "python":  "CPython 3.11.14",
+  "startedAt":  "2025-10-27T16:02:12.374255Z",
+  "args":  [
+    "--agent_type",
+    "agent_dqn",
+    "--rom",
+    "ms_pacman",
+    "--total_frames",
+    "300_000",
+    "--checkpoint_interval",
+    "10_000",
+    "--record_video",
+    "--video_dir",
+    "videos/dqn_ms_pacman",
+    "--video_every",
+    "10",
+    "--wandb_project",
+    "physical-atari-dqn",
+    "--wandb_run_name",
+    "dqn_ms_pacman_latency"
+  ],
+  "program":  "/Users/praneetkedari/Documents/GitHub/physical_atari/sim_latency.py",
+  "codePath":  "sim_latency.py",
+  "codePathLocal":  "sim_latency.py",
+  "git":  {
+    "remote":  "https://github.com/lakers38/physical_atari.git",
+    "commit":  "4047f30333ed8ac20716ce90b02a5c18298d5460"
+  },
+  "email":  "praneetkedari38@gmail.com",
+  "root":  "/Users/praneetkedari/Documents/GitHub/physical_atari",
+  "host":  "Praneets-Typewriter-2.local",
+  "executable":  "/Users/praneetkedari/anaconda3/envs/physical_atari/bin/python",
+  "cpu_count":  10,
+  "cpu_count_logical":  10,
+  "disk":  {
+    "/":  {
+      "total":  "994662584320",
+      "used":  "602520399872"
+    }
+  },
+  "memory":  {
+    "total":  "17179869184"
+  },
+  "apple":  {
+    "name":  "Apple M1 Pro",
+    "ecpuCores":  2,
+    "pcpuCores":  8,
+    "gpuCores":  16,
+    "memoryGb":  16,
+    "swapTotalBytes":  "9663676416",
+    "ramTotalBytes":  "17179869184"
+  },
+  "writerId":  "qstacjmwcwq7j8t7eyrbbj1i8zngpkpv"
+}

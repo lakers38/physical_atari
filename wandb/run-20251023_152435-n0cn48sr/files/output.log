@@ -1,0 +1,104 @@
+Episode    1 | score    380 | frames    2000 | fps 583.8 | epsilon 0.998 | loss 0.0000
+Episode    2 | score    310 | frames    3817 | fps 649.2 | epsilon 0.997 | loss 0.0000
+Episode    3 | score    310 | frames    6210 | fps 670.7 | epsilon 0.994 | loss 0.0000
+Episode    4 | score    270 | frames    8083 | fps 670.4 | epsilon 0.993 | loss 0.0000
+Episode    5 | score    220 | frames    9940 | fps 512.9 | epsilon 0.991 | loss 0.0000
+Episode    6 | score    150 | frames   11573 | fps 515.4 | epsilon 0.990 | loss 0.0000
+Episode    7 | score    220 | frames   13470 | fps 521.8 | epsilon 0.988 | loss 0.0000
+Episode    8 | score    380 | frames   15759 | fps 535.8 | epsilon 0.986 | loss 0.0000
+Episode    9 | score    170 | frames   17408 | fps 536.8 | epsilon 0.984 | loss 0.0000
+Episode   10 | score    270 | frames   19401 | fps 519.3 | epsilon 0.983 | loss 0.0000
+Episode   11 | score    210 | frames   21370 | fps 491.1 | epsilon 0.981 | loss 0.0000
+Episode   12 | score    170 | frames   23051 | fps 490.5 | epsilon 0.979 | loss 0.0000
+Episode   13 | score    400 | frames   24868 | fps 493.9 | epsilon 0.978 | loss 0.0000
+Episode   14 | score    320 | frames   26773 | fps 489.1 | epsilon 0.976 | loss 0.0000
+Episode   15 | score    310 | frames   28662 | fps 484.5 | epsilon 0.974 | loss 0.0000
+Episode   16 | score    240 | frames   30247 | fps 489.0 | epsilon 0.973 | loss 0.0000
+Episode   17 | score    280 | frames   32184 | fps 493.7 | epsilon 0.971 | loss 0.0000
+Episode   18 | score    840 | frames   36153 | fps 501.6 | epsilon 0.967 | loss 0.0000
+Episode   19 | score    640 | frames   38818 | fps 504.8 | epsilon 0.965 | loss 0.0000
+Episode   20 | score    230 | frames   40995 | fps 500.6 | epsilon 0.963 | loss 0.0000
+Episode   21 | score    190 | frames   42484 | fps 499.3 | epsilon 0.962 | loss 0.0000
+Episode   22 | score    310 | frames   44453 | fps 492.5 | epsilon 0.960 | loss 0.0000
+Episode   23 | score    240 | frames   45926 | fps 491.7 | epsilon 0.959 | loss 0.0000
+Episode   24 | score    380 | frames   48063 | fps 494.9 | epsilon 0.957 | loss 0.0000
+Episode   25 | score    300 | frames   50384 | fps 471.4 | epsilon 0.955 | loss 0.0001
+Episode   26 | score    630 | frames   53657 | fps 380.6 | epsilon 0.952 | loss 0.0004
+Episode   27 | score    300 | frames   55306 | fps 351.1 | epsilon 0.950 | loss 0.0002
+Episode   28 | score    260 | frames   57491 | fps 320.2 | epsilon 0.948 | loss 0.2965
+Episode   29 | score    290 | frames   59276 | fps 302.4 | epsilon 0.947 | loss 0.0002
+Episode   30 | score    670 | frames   62133 | fps 279.2 | epsilon 0.944 | loss 0.2961
+Episode   31 | score    160 | frames   63670 | fps 266.9 | epsilon 0.943 | loss 0.2965
+Episode   32 | score    210 | frames   65511 | fps 253.3 | epsilon 0.941 | loss 0.2967
+Episode   33 | score    240 | frames   67264 | fps 243.5 | epsilon 0.939 | loss 0.0002
+Episode   34 | score    280 | frames   69217 | fps 234.4 | epsilon 0.938 | loss 0.0003
+Episode   35 | score    170 | frames   70906 | fps 227.4 | epsilon 0.936 | loss 0.2968
+Episode   36 | score    320 | frames   72907 | fps 218.0 | epsilon 0.934 | loss 0.0001
+Episode   37 | score    130 | frames   74076 | fps 214.0 | epsilon 0.933 | loss 0.8886
+Episode   38 | score    300 | frames   75813 | fps 208.8 | epsilon 0.932 | loss 0.2964
+Episode   39 | score    650 | frames   78230 | fps 202.3 | epsilon 0.930 | loss 1.5465
+Episode   40 | score    320 | frames   80103 | fps 196.7 | epsilon 0.928 | loss 0.0002
+Episode   41 | score    180 | frames   81728 | fps 192.9 | epsilon 0.926 | loss 0.2966
+Episode   42 | score    140 | frames   83169 | fps 190.0 | epsilon 0.925 | loss 0.0002
+Episode   43 | score    160 | frames   84594 | fps 187.6 | epsilon 0.924 | loss 0.2909
+Episode   44 | score    430 | frames   87283 | fps 183.2 | epsilon 0.921 | loss 0.0000
+Episode   45 | score    290 | frames   89244 | fps 180.2 | epsilon 0.920 | loss 0.0001
+Episode   46 | score    420 | frames   91237 | fps 177.1 | epsilon 0.918 | loss 0.2964
+Episode   47 | score    390 | frames   93062 | fps 174.6 | epsilon 0.916 | loss 0.3074
+Episode   48 | score    300 | frames   95015 | fps 171.4 | epsilon 0.914 | loss 0.0009
+Episode   49 | score    170 | frames   96368 | fps 169.5 | epsilon 0.913 | loss 0.0001
+Episode   50 | score    190 | frames   98129 | fps 167.4 | epsilon 0.912 | loss 0.2962
+Episode   51 | score    290 | frames  100002 | fps 165.2 | epsilon 0.910 | loss 0.2965
+Episode   52 | score    220 | frames  101699 | fps 163.1 | epsilon 0.908 | loss 0.2964
+Episode   53 | score    330 | frames  103548 | fps 160.6 | epsilon 0.907 | loss 0.0003
+Episode   54 | score    280 | frames  105565 | fps 157.9 | epsilon 0.905 | loss 0.0001
+Episode   55 | score    570 | frames  108606 | fps 154.2 | epsilon 0.902 | loss 0.0001
+Episode   56 | score    220 | frames  110383 | fps 152.3 | epsilon 0.901 | loss 0.0005
+Episode   57 | score    730 | frames  112920 | fps 149.7 | epsilon 0.898 | loss 0.0001
+Episode   58 | score    580 | frames  115257 | fps 147.6 | epsilon 0.896 | loss 0.5927
+Episode   59 | score    310 | frames  116874 | fps 146.4 | epsilon 0.895 | loss 0.0002
+Episode   60 | score    810 | frames  119611 | fps 144.3 | epsilon 0.892 | loss 0.2964
+Episode   61 | score    240 | frames  121292 | fps 143.0 | epsilon 0.891 | loss 0.0001
+Episode   62 | score    620 | frames  123613 | fps 141.4 | epsilon 0.889 | loss 0.0001
+Episode   63 | score    330 | frames  125838 | fps 140.0 | epsilon 0.887 | loss 0.0001
+Episode   64 | score    230 | frames  127871 | fps 138.9 | epsilon 0.885 | loss 0.0002
+Episode   65 | score    310 | frames  129920 | fps 137.6 | epsilon 0.883 | loss 0.8862
+Episode   66 | score    910 | frames  132145 | fps 136.4 | epsilon 0.881 | loss 0.2965
+Episode   67 | score    340 | frames  135130 | fps 134.8 | epsilon 0.878 | loss 0.0142
+Episode   68 | score    320 | frames  137147 | fps 133.7 | epsilon 0.877 | loss 0.0014
+Episode   69 | score    360 | frames  139180 | fps 132.8 | epsilon 0.875 | loss 0.3947
+Episode   70 | score    380 | frames  141485 | fps 131.3 | epsilon 0.873 | loss 0.8346
+Episode   71 | score    160 | frames  143238 | fps 130.6 | epsilon 0.871 | loss 0.0818
+Episode   72 | score    700 | frames  146583 | fps 129.1 | epsilon 0.868 | loss 0.2961
+Episode   73 | score    680 | frames  149448 | fps 128.0 | epsilon 0.865 | loss 0.0093
+Episode   74 | score    500 | frames  152177 | fps 127.4 | epsilon 0.863 | loss 0.3090
+Episode   75 | score    240 | frames  154386 | fps 126.9 | epsilon 0.861 | loss 0.2970
+Episode   76 | score    860 | frames  158427 | fps 125.8 | epsilon 0.857 | loss 0.2853
+Episode   77 | score    340 | frames  160060 | fps 125.3 | epsilon 0.856 | loss 0.0002
+Episode   78 | score    530 | frames  162173 | fps 124.7 | epsilon 0.854 | loss 0.2964
+Episode   79 | score    290 | frames  163806 | fps 124.3 | epsilon 0.853 | loss 0.0022
+Episode   80 | score    240 | frames  165679 | fps 123.8 | epsilon 0.851 | loss 0.5873
+Episode   81 | score    530 | frames  167952 | fps 123.0 | epsilon 0.849 | loss 0.0034
+Episode   82 | score    270 | frames  169777 | fps 122.6 | epsilon 0.847 | loss 0.0057
+Episode   83 | score    310 | frames  171786 | fps 122.1 | epsilon 0.845 | loss 0.3230
+Episode   84 | score    390 | frames  174131 | fps 121.6 | epsilon 0.843 | loss 0.2966
+Episode   85 | score    350 | frames  176220 | fps 121.3 | epsilon 0.841 | loss 0.0008
+Episode   86 | score    190 | frames  177861 | fps 120.7 | epsilon 0.840 | loss 0.0264
+Episode   87 | score    320 | frames  179854 | fps 120.2 | epsilon 0.838 | loss 0.0013
+Episode   88 | score    210 | frames  182423 | fps 119.4 | epsilon 0.836 | loss 0.2975
+Episode   89 | score    150 | frames  183992 | fps 119.0 | epsilon 0.834 | loss 0.0048
+Episode   90 | score    510 | frames  187001 | fps 118.2 | epsilon 0.832 | loss 0.4443
+Episode   91 | score    570 | frames  189634 | fps 117.5 | epsilon 0.829 | loss 0.0031
+Traceback (most recent call last):
+  File "/Users/praneetkedari/Documents/GitHub/physical_atari/sim_dqn_latency.py", line 182, in <module>
+    main()
+  File "/Users/praneetkedari/Documents/GitHub/physical_atari/sim_dqn_latency.py", line 134, in main
+    agent_action_index = agent.frame(obs, reward, end_flag)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/praneetkedari/Documents/GitHub/physical_atari/agent_dqn.py", line 243, in frame
+    action = self._select_action(current_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/praneetkedari/Documents/GitHub/physical_atari/agent_dqn.py", line 187, in _select_action
+    state_tensor = torch.from_numpy(state).unsqueeze(0).to(self.device, dtype=torch.float32) / 255.0
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
