@@ -51,6 +51,10 @@ def build_argument_parser():
     parser.add_argument('--wandb_project', type=str, default='sim-latency')
     parser.add_argument('--wandb_entity', type=str, default=None)
     parser.add_argument('--wandb_run_name', type=str, default=None)
+    parser.add_argument('--record_video', action='store_true', help="Record gameplay videos for selected episodes")
+    parser.add_argument('--video_dir', type=str, default=os.path.join(os.getcwd(), 'videos', 'sim_latency'))
+    parser.add_argument('--video_every', type=int, default=10, help="Record every N episodes when --record_video is set")
+    parser.add_argument('--video_fps', type=int, default=60)
     return parser
 
 
@@ -179,6 +183,10 @@ def main():
 
     latency_model = None if args.no_latency else LatencyModel(args.latency_weights)
 
+    if args.record_video:
+        import imageio
+        os.makedirs(args.video_dir, exist_ok=True)
+
     config = vars(args).copy()
     config['agent_kwargs'] = agent_kwargs
     config.pop('agent_arg', None)
@@ -190,11 +198,21 @@ def main():
     episode_reward = 0.0
     episode = 0
 
+    def should_record(ep_index: int) -> bool:
+        return args.record_video and (ep_index % args.video_every == 0)
+
+    next_episode_index = 1
+    record_episode = should_record(next_episode_index)
+    episode_frames = [] if record_episode else []
+
     start_time = time.time()
 
     for frame in range(args.total_frames):
         delayed_actions.append(taken_action_index)
         cmd_index = delayed_actions.pop(0)
+        if args.record_video and record_episode:
+            episode_frames.append(obs.copy())
+
         reward = ale.act(legal_actions[cmd_index])
         episode_reward += reward
 
@@ -202,6 +220,8 @@ def main():
         end_flag = 2 if done else 0
 
         next_obs = ale.getScreenRGB()
+        if args.record_video and record_episode:
+            episode_frames.append(next_obs.copy())
 
         agent_action_index = agent.frame(obs, reward, end_flag)
         requested_action = action_set[agent_action_index]
@@ -237,10 +257,24 @@ def main():
             if wandb_run is not None:
                 wandb_run.log({k: v for k, v in log_dict.items() if v is not None}, step=frame)
 
+            if args.record_video and record_episode and episode_frames:
+                video_path = os.path.join(
+                    args.video_dir,
+                    f"{args.rom}_episode_{episode:04d}.mp4",
+                )
+                imageio.mimsave(video_path, episode_frames, fps=args.video_fps)
+                print(f"Saved video {video_path}")
+            episode_frames = []
+            record_episode = False
+
             ale.reset_game()
             next_obs = ale.getScreenRGB()
             episode_reward = 0.0
             delayed_actions = [0] * args.delay_frames
+
+            next_episode_index = episode + 1
+            record_episode = should_record(next_episode_index)
+            episode_frames = [] if record_episode else []
 
         if args.log_interval > 0 and (frame + 1) % args.log_interval == 0:
             elapsed = time.time() - start_time

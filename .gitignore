@@ -25,6 +25,12 @@ pip-delete-this-directory.txt
 results/
 local/
 train_data/
+<<<<<<< HEAD
 
 # wandb logs
 wandb/
+=======
+wandb/
+videos/
+
+>>>>>>> main
