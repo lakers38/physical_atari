@@ -1,16 +1,23 @@
+from __future__ import annotations
+
 import math
 import os
+import time
 from collections import deque
-from typing import Deque, Optional
+from typing import Deque, Dict, Iterable, List, Optional, Tuple
 
-import cv2
+from mpmath.libmp.libelefun import atan_taylor_get_cached
 import numpy as np
 import torch
+from torch._inductor.ir import NoneAsConstantBuffer
 import torch.nn as nn
 import torch.nn.functional as F
 
+from vector_agents import VectorAgent
+from agent_utils import preprocess_batch
 
-# --- NoisyNet layers ---------------------------------------------------------
+# Noisy layers / prioritized replay
+
 
 class NoisyLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, sigma_init: float = 0.5):
@@ -20,11 +27,11 @@ class NoisyLinear(nn.Module):
 
         self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
         self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
-        self.register_buffer('weight_epsilon', torch.empty(out_features, in_features))
+        self.register_buffer("weight_epsilon", torch.empty(out_features, in_features))
 
         self.bias_mu = nn.Parameter(torch.empty(out_features))
         self.bias_sigma = nn.Parameter(torch.empty(out_features))
-        self.register_buffer('bias_epsilon', torch.empty(out_features))
+        self.register_buffer("bias_epsilon", torch.empty(out_features))
 
         self.sigma_init = sigma_init
         self.reset_parameters()
@@ -57,11 +64,8 @@ class NoisyLinear(nn.Module):
         return F.linear(x, weight, bias)
 
 
-# --- Prioritized Replay Buffer -----------------------------------------------
-
 class SumTree:
     def __init__(self, capacity: int):
-        # next power of two
         self.capacity = 1
         while self.capacity < capacity:
             self.capacity *= 2
@@ -85,7 +89,7 @@ class SumTree:
             if self.tree[left] >= prefixsum:
                 idx = left
             else:
-                prefixsum -= self.tree[left]
+                prefixsum -= float(self.tree[left].item())
                 idx = left + 1
         return idx - self.capacity
 
@@ -95,7 +99,7 @@ class PrioritizedReplay:
         self,
         capacity: int,
         stack_size: int,
-        obs_shape: tuple[int, int],
+        obs_shape: Tuple[int, int],
         alpha: float,
         beta: float,
         beta_increment: float,
@@ -126,24 +130,20 @@ class PrioritizedReplay:
     def size(self):
         return self.capacity if self.full else self.ptr
 
-    def _store(self, array, value):
-        array[self.ptr] = value
-
     def add(self, state, action, reward, next_state, done):
-        self._store(self.states, state)
-        self._store(self.actions, action)
-        self._store(self.rewards, reward)
-        self._store(self.next_states, next_state)
-        self._store(self.dones, done)
+        self.states[self.ptr] = state
+        self.next_states[self.ptr] = next_state
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.dones[self.ptr] = done
 
-        self.tree.update(self.ptr, self.max_priority ** self.alpha)
+        self.tree.update(self.ptr, self.max_priority**self.alpha)
 
         self.ptr = (self.ptr + 1) % self.capacity
         if self.ptr == 0:
             self.full = True
 
     def sample(self, batch_size: int):
-        assert self.size >= batch_size
         indices = []
         priorities = []
         segment = self.tree.total() / batch_size
@@ -162,33 +162,30 @@ class PrioritizedReplay:
         probs = priorities / self.tree.total().item()
         weights = (self.size * probs) ** (-self.beta)
         weights /= weights.max()
+        weights = torch.from_numpy(weights).to(self.device, dtype=torch.float32)
         self.beta = min(1.0, self.beta + self.beta_increment)
 
         states = torch.from_numpy(self.states[indices]).to(self.device, dtype=torch.float32) / 255.0
+        next_states = torch.from_numpy(self.next_states[indices]).to(self.device, dtype=torch.float32) / 255.0
         actions = torch.from_numpy(self.actions[indices]).to(self.device, dtype=torch.int64)
         rewards = torch.from_numpy(self.rewards[indices]).to(self.device, dtype=torch.float32)
-        next_states = torch.from_numpy(self.next_states[indices]).to(self.device, dtype=torch.float32) / 255.0
         dones = torch.from_numpy(self.dones[indices].astype(np.float32)).to(self.device, dtype=torch.float32)
-        weights = torch.from_numpy(weights).to(self.device, dtype=torch.float32)
 
         return indices, states, actions, rewards, next_states, dones, weights
 
     def update_priorities(self, indices, priorities):
-        priorities = priorities.detach().cpu().numpy()
+        priorities = priorities.cpu().numpy()
         for idx, priority in zip(indices, priorities):
-            priority = (abs(priority) + self.priority_eps).item()
-            self.tree.update(idx, priority ** self.alpha)
+            priority = float(priority) + self.priority_eps
+            self.tree.update(idx, priority**self.alpha)
             self.max_priority = max(self.max_priority, priority)
 
 
-# --- Rainbow Agent -----------------------------------------------------------
-
-
-class NoisyRainbowNet(nn.Module):
+class RainbowNetwork(nn.Module):
     def __init__(self, in_channels: int, num_actions: int, num_atoms: int):
         super().__init__()
-        self.num_atoms = num_atoms
         self.num_actions = num_actions
+        self.num_atoms = num_atoms
 
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
@@ -201,19 +198,12 @@ class NoisyRainbowNet(nn.Module):
 
         self.fc_input_dim = 64 * 7 * 7
 
-        self.value_stream = nn.Sequential(
-            NoisyLinear(self.fc_input_dim, 512),
-            nn.ReLU(),
-            NoisyLinear(512, num_atoms),
-        )
-
-        self.advantage_stream = nn.Sequential(
+        self.value_stream = nn.Sequential(NoisyLinear(self.fc_input_dim, 512), nn.ReLU(), NoisyLinear(512, num_atoms))
+        self.adv_stream = nn.Sequential(
             NoisyLinear(self.fc_input_dim, 512),
             nn.ReLU(),
             NoisyLinear(512, num_actions * num_atoms),
         )
-
-        self.reset_noise()
 
     def reset_noise(self):
         for module in self.modules():
@@ -225,8 +215,7 @@ class NoisyRainbowNet(nn.Module):
         features = features.view(features.size(0), -1)
 
         value = self.value_stream(features).view(-1, 1, self.num_atoms)
-        advantage = self.advantage_stream(features).view(-1, self.num_actions, self.num_atoms)
-
+        advantage = self.adv_stream(features).view(-1, self.num_actions, self.num_atoms)
         q_atoms = value + (advantage - advantage.mean(dim=1, keepdim=True))
         log_probs = F.log_softmax(q_atoms, dim=2)
         probs = torch.exp(log_probs)
@@ -234,206 +223,249 @@ class NoisyRainbowNet(nn.Module):
 
     def q_values(self, x, support):
         probs, _ = self.forward(x)
-        q = torch.sum(probs * support.view(1, 1, -1), dim=2)
-        return q
+        return torch.sum(probs * support.view(1, 1, -1), dim=2)
 
 
-class Agent:
-    def __init__(self, data_dir, seed, num_actions, total_frames, **kwargs):
+class RainbowCore:
+    def __init__(
+        self,
+        *,
+        num_envs: int,
+        seed: int,
+        num_actions: int,
+        total_frames: int,
+        stack_size: int = 4,
+        obs_height: int = 84,
+        obs_width: int = 84,
+        buffer_size: int = 100_000,
+        batch_size: int = 32,
+        learning_rate: float = 1e-4,
+        gamma: float = 0.99,
+        train_start: int = 50_000,
+        train_freq: int = 1,
+        target_update_freq: int = 2_000,
+        epsilon_start: float = 0.0,
+        epsilon_end: float = 0.0,
+        epsilon_decay_frames: int = 1_000_000,
+        frame_skip: int = 1,
+        grad_clip: Optional[float] = 10.0,
+        n_step: int = 3,
+        num_atoms: int = 51,
+        v_min: float = -10.0,
+        v_max: float = 10.0,
+        priority_alpha: float = 0.5,
+        priority_beta: float = 0.4,
+        priority_beta_increment: float = 1e-6,
+        priority_eps: float = 1e-6,
+        data_dir: Optional[str] = None,
+        load_file: Optional[str] = None,
+        gpu: int = 0,
+    ):
+        self.num_envs = num_envs
         self.num_actions = num_actions
         self.total_frames = total_frames
-        self.seed = seed
+        self.stack_size = stack_size
+        self.obs_height = obs_height
+        self.obs_width = obs_width
+        self.buffer_size = buffer_size
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self.gamma = gamma
+        self.train_start = train_start
+        self.train_freq = train_freq
+        self.target_update_freq = target_update_freq
+        self.epsilon_start = epsilon_start
+        self.epsilon_end = epsilon_end
+        self.epsilon_decay_frames = epsilon_decay_frames
+        self.grad_clip = grad_clip
+        self.frame_skip = frame_skip
 
-        self.stack_size = kwargs.get('stack_size', 4)
-        self.obs_height = kwargs.get('obs_height', 84)
-        self.obs_width = kwargs.get('obs_width', 84)
-        self.gamma = kwargs.get('gamma', 0.99)
-        self.n_step = kwargs.get('n_step', 3)
-        self.learning_rate = kwargs.get('learning_rate', 1e-4)
-        self.batch_size = kwargs.get('batch_size', 32)
-        self.buffer_size = kwargs.get('buffer_size', 500_000)
-        self.train_start = kwargs.get('train_start', 50_000)
-        self.train_freq = kwargs.get('train_freq', 1)
-        self.target_update_freq = kwargs.get('target_update_freq', 2_000)
-        self.grad_clip = kwargs.get('grad_clip', 10.0)
-
-        self.alpha = kwargs.get('priority_alpha', 0.5)
-        self.beta = kwargs.get('priority_beta', 0.4)
-        self.beta_increment = kwargs.get('priority_beta_increment', 1e-6)
-        self.priority_eps = kwargs.get('priority_eps', 1e-6)
-
-        self.num_atoms = kwargs.get('num_atoms', 51)
-        self.v_min = kwargs.get('v_min', -10.0)
-        self.v_max = kwargs.get('v_max', 10.0)
-
-        self.epsilon_start = kwargs.get('epsilon_start', 0.0)
-        self.epsilon_end = kwargs.get('epsilon_end', 0.0)
-        self.epsilon_decay_frames = kwargs.get('epsilon_decay_frames', 1_000_000)
-        self.epsilon = self.epsilon_start
-
-        self.frame_skip = kwargs.get('frame_skip', 1)
-
-        self.device = self._init_device(kwargs.get('gpu', 0))
-
-        rng = np.random.default_rng(seed)
+        self.n_step = n_step
+        self.num_atoms = num_atoms
+        self.v_min = v_min
+        self.v_max = v_max
+        self.delta_z = (self.v_max - self.v_min) / (self.num_atoms - 1)
         torch.manual_seed(seed)
-        if self.device.type == 'cuda':
+        np.random.seed(seed)
+
+        if torch.cuda.is_available():
+            self.device = torch.device(f'cuda:{gpu}')
             torch.cuda.manual_seed_all(seed)
+        elif torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        else:
+            self.device = torch.device('cpu')
 
-        self.support = torch.linspace(self.v_min, self.v_max, self.num_atoms, device=self.device)
-
-        self.q_network = NoisyRainbowNet(self.stack_size, num_actions, self.num_atoms).to(self.device)
-        self.target_network = NoisyRainbowNet(self.stack_size, num_actions, self.num_atoms).to(self.device)
-        self.target_network.load_state_dict(self.q_network.state_dict())
-        self.target_network.eval()
-
-        self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
-
+        self.network = RainbowNetwork(stack_size, num_actions, num_atoms).to(self.device)
+        self.target_network = RainbowNetwork(stack_size, num_actions, num_atoms).to(self.device)
+        self.target_network.load_state_dict(self.network.state_dict())
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
         self.replay = PrioritizedReplay(
-            capacity=self.buffer_size,
-            stack_size=self.stack_size,
-            obs_shape=(self.obs_height, self.obs_width),
-            alpha=self.alpha,
-            beta=self.beta,
-            beta_increment=self.beta_increment,
-            priority_eps=self.priority_eps,
+            capacity=buffer_size,
+            stack_size=stack_size,
+            obs_shape=(obs_height, obs_width),
+            alpha=priority_alpha,
+            beta=priority_beta,
+            beta_increment=priority_beta_increment,
+            priority_eps=priority_eps,
             device=self.device,
         )
 
-        self.state_stack: Optional[Deque[np.ndarray]] = None
-        self.last_state: Optional[np.ndarray] = None
-        self.last_action: Optional[int] = None
-        self.n_step_buffer = deque(maxlen=self.n_step)
+        self.state_stacks = np.zeros((num_envs, stack_size, obs_height, obs_width), dtype=np.uint8)
+        self.last_states = np.zeros_like(self.state_stacks)
+        self.last_actions = np.full((num_envs,), -1, dtype=np.int64)
+        self.n_step_buffers: List[Deque] = [deque(maxlen=self.n_step) for _ in range(num_envs)]
 
         self.frame_count = 0
-        self.actions_taken = 0
         self.training_steps = 0
+        self.epsilon = epsilon_start
 
         self.last_loss = 0.0
         self.loss_ema = None
         self.last_avg_q = 0.0
         self.last_max_q = 0.0
 
-        load_file = kwargs.get('load_file')
+        self.support = torch.linspace(self.v_min, self.v_max, self.num_atoms, device=self.device)
+
+        self.data_dir = data_dir or os.getcwd()
         if load_file is not None and os.path.exists(load_file):
-            state_dict = torch.load(load_file, map_location=self.device)
-            self.q_network.load_state_dict(state_dict)
-            self.target_network.load_state_dict(self.q_network.state_dict())
+            self.load_model(load_file)
 
-    @staticmethod
-    def _init_device(gpu_index: int) -> torch.device:
-        if torch.cuda.is_available():
-            return torch.device(f'cuda:{gpu_index}')
-        if torch.backends.mps.is_available():
-            return torch.device('mps')
-        return torch.device('cpu')
+    def epsilon_scheduler(self) -> float:
+        frac = min(self.frame_count / float(self.epsilon_decay_frames), 1.0)
+        return self.epsilon_start + frac * (self.epsilon_end - self.epsilon_start)
 
-    def _preprocess(self, frame: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        resized = cv2.resize(gray, (self.obs_width, self.obs_height), interpolation=cv2.INTER_AREA)
-        return resized.astype(np.uint8)
+    def reset(self, observations: np.ndarray):
+        processed = preprocess_batch(observations, self.obs_height, self.obs_width)
+        for env in range(self.num_envs):
+            self.state_stacks[env] = np.repeat(processed[env][None, ...], self.stack_size, axis=0)
+            self.last_actions[env] = -1
+            self.n_step_buffers[env].clear()
 
-    def _ensure_state_stack(self, processed_frame: np.ndarray):
-        if self.state_stack is None:
-            self.state_stack = deque([processed_frame] * self.stack_size, maxlen=self.stack_size)
-        else:
-            self.state_stack.append(processed_frame)
+    def act(self, observations: np.ndarray) -> np.ndarray:
+        processed = preprocess_batch(observations, self.obs_height, self.obs_width)
+        self.state_stacks = np.roll(self.state_stacks, shift=-1, axis=1)
+        self.state_stacks[:, -1, :, :] = processed
 
-    def _stack_frames(self) -> np.ndarray:
-        assert self.state_stack is not None
-        return np.stack(self.state_stack, axis=0)
+        self.epsilon = self.epsilon_scheduler()
+        actions = np.empty(self.num_envs, dtype=np.int64)
+        stacked = torch.from_numpy(self.state_stacks).to(self.device, dtype=torch.float32) / 255.0
 
-    def _epsilon_by_frame(self, frame_idx: int) -> float:
-        decay_fraction = min(frame_idx / float(self.epsilon_decay_frames), 1.0)
-        epsilon = self.epsilon_start + decay_fraction * (self.epsilon_end - self.epsilon_start)
-        return max(self.epsilon_end, epsilon)
-
-    def _select_action(self, state: np.ndarray) -> int:
-        self.epsilon = self._epsilon_by_frame(self.frame_count)
-        if np.random.random() < self.epsilon:
-            return np.random.randint(self.num_actions)
-
-        state_tensor = torch.from_numpy(state).unsqueeze(0).to(self.device, dtype=torch.float32) / 255.0
-        self.q_network.reset_noise()
         with torch.no_grad():
-            q_values = self.q_network.q_values(state_tensor, self.support)
-            action = int(torch.argmax(q_values, dim=1).item())
+            self.network.reset_noise()
+            q_values = self.network.q_values(stacked, self.support)
+            greedy_actions = torch.argmax(q_values, dim=1).cpu().numpy()
             self.last_avg_q = float(q_values.mean().item())
             self.last_max_q = float(q_values.max().item())
-        return action
 
-    def _aggregate_n_step(self):
-        reward, done = 0.0, False
-        for idx, (_, _, r, _, d) in enumerate(self.n_step_buffer):
-            reward += (self.gamma ** idx) * r
+        for env in range(self.num_envs):
+            if np.random.random() < self.epsilon:
+                actions[env] = np.random.randint(self.num_actions)
+            else:
+                actions[env] = int(greedy_actions[env])
+
+        self.last_states = self.state_stacks.copy()
+        self.last_actions = actions.copy()
+        return actions
+
+    def _flush_n_step(self, env: int, processed_next: np.ndarray, done: bool):
+        buffer = self.n_step_buffers[env]
+        if len(buffer) == 0:
+            return
+        cumulative_reward = 0.0
+        for idx, (r, d, _, _) in enumerate(buffer):
+            cumulative_reward += (self.gamma**idx) * r
             if d:
                 done = True
                 break
-        state, action, _, _, _ = self.n_step_buffer[0]
-        next_state, _, _, _, done_final = self.n_step_buffer[-1]
-        return state, action, reward, next_state, done or done_final
+        state, action = buffer[0][2], buffer[0][3]
+        if done:
+            next_state = np.repeat(processed_next[None, ...], self.stack_size, axis=0)
+        else:
+            next_state = self.state_stacks[env]
+        self.replay.add(state, action, cumulative_reward, next_state, done)
+        buffer.clear()
 
-    def _append_n_step(self, transition):
-        self.n_step_buffer.append(transition)
-        if len(self.n_step_buffer) < self.n_step:
-            return None
-        return self._aggregate_n_step()
+    def observe(self, next_observations, rewards, terminations, truncations):
+        processed = preprocess_batch(next_observations, self.obs_height, self.obs_width)
+        next_stacks = self.state_stacks.copy()
+        next_stacks = np.roll(next_stacks, shift=-1, axis=1)
+        next_stacks[:, -1, :, :] = processed
 
-    def _projection_distribution(self, next_probs, rewards, dones):
-        batch_size = rewards.size(0)
-        support = self.support.unsqueeze(0).expand(batch_size, -1)
+        for env in range(self.num_envs):
+            action = self.last_actions[env]
+            if action == -1:
+                continue
 
-        T_z = rewards.unsqueeze(1) + (self.gamma ** self.n_step) * (1 - dones.unsqueeze(1)) * support
-        T_z = T_z.clamp(self.v_min, self.v_max)
+            done = bool(terminations[env] or truncations[env])
+            self.n_step_buffers[env].append((rewards[env], done, self.last_states[env], action))
 
-        b = (T_z - self.v_min) / (self.v_max - self.v_min) * (self.num_atoms - 1)
-        lower = b.floor().to(torch.int64)
-        upper = b.ceil().to(torch.int64)
+            if len(self.n_step_buffers[env]) == self.n_step:
+                cumulative_reward = 0.0
+                for idx, (r, d, _, _) in enumerate(self.n_step_buffers[env]):
+                    cumulative_reward += (self.gamma**idx) * r
+                    if d:
+                        break
+                state = self.n_step_buffers[env][0][2]
+                next_state = next_stacks[env]
+                final_done = done
+                self.replay.add(state, action, cumulative_reward, next_state, final_done)
 
-        projection = torch.zeros_like(next_probs)
-        offset = torch.linspace(0, (batch_size - 1) * self.num_atoms, batch_size, device=self.device).unsqueeze(1)
+            if done:
+                self._flush_n_step(env, processed[env], done)
+                stack = np.repeat(processed[env][None, ...], self.stack_size, axis=0)
+                self.state_stacks[env] = stack
+                self.last_actions[env] = -1
 
-        projection.view(-1).index_add_(
-            0,
-            (lower + offset).view(-1),
-            (next_probs * (upper.float() - b)).view(-1),
-        )
-        projection.view(-1).index_add_(
-            0,
-            (upper + offset).view(-1),
-            (next_probs * (b - lower.float())).view(-1),
-        )
-        return projection
+        self.frame_count += self.num_envs
 
-    def _train_step(self):
+    def train_step(self):
+        if self.replay.size < max(self.train_start, self.batch_size):
+            return
+        if self.frame_count % self.train_freq != 0:
+            return
+
         indices, states, actions, rewards, next_states, dones, weights = self.replay.sample(self.batch_size)
 
+        self.network.reset_noise()
+        self.target_network.reset_noise()
+
         with torch.no_grad():
-            self.target_network.reset_noise()
-            self.q_network.reset_noise()
+            next_probs, _ = self.network(next_states)
+            q_values = torch.sum(next_probs * self.support.view(1, 1, -1), dim=2)
+            next_actions = torch.argmax(q_values, dim=1)
 
-            next_probs, _ = self.q_network(next_states)
-            next_q = torch.sum(next_probs * self.support.view(1, 1, -1), dim=2)
-            next_actions = torch.argmax(next_q, dim=1)
+            target_probs, _ = self.target_network(next_states)
+            target_probs = target_probs[torch.arange(self.batch_size), next_actions]
+            tz = rewards.unsqueeze(1) + (self.gamma**self.n_step) * (1 - dones.unsqueeze(1)) * self.support.unsqueeze(0)
+            tz = tz.clamp(self.v_min, self.v_max)
+            b = (tz - self.v_min) / self.delta_z
+            l = b.floor().to(torch.int64)
+            u = b.ceil().to(torch.int64)
+            proj_dist = torch.zeros(target_probs.size(), device=self.device)
+            offset = torch.arange(
+                0,
+                self.batch_size * self.num_atoms,
+                self.num_atoms,
+                device=self.device,
+                dtype=torch.int64,
+            ).unsqueeze(1)
+            proj_dist.view(-1).index_add_(0, (l + offset).view(-1), (target_probs * (u.float() - b)).view(-1))
+            proj_dist.view(-1).index_add_(0, (u + offset).view(-1), (target_probs * (b - l.float())).view(-1))
 
-            target_next_probs, _ = self.target_network(next_states)
-            target_next_probs = target_next_probs[torch.arange(self.batch_size), next_actions]
-            target_distribution = self._projection_distribution(target_next_probs, rewards, dones)
-
-        probs, log_probs = self.q_network(states)
+        self.network.reset_noise()
+        probs, log_probs = self.network(states)
         log_p = log_probs[torch.arange(self.batch_size), actions]
-
-        per_sample_loss = -torch.sum(target_distribution * log_p, dim=1)
-        loss = (per_sample_loss * weights).mean()
+        sample_losses = -(proj_dist * log_p).sum(dim=1)
+        loss = (sample_losses * weights).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
         if self.grad_clip is not None:
-            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.grad_clip)
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.grad_clip)
         self.optimizer.step()
 
-        self.replay.update_priorities(indices, per_sample_loss.detach())
-
+        self.replay.update_priorities(indices, sample_losses.detach())
         self.last_loss = float(loss.item())
         if self.loss_ema is None:
             self.loss_ema = self.last_loss
@@ -442,40 +474,96 @@ class Agent:
 
         self.training_steps += 1
         if self.training_steps % self.target_update_freq == 0:
-            self.target_network.load_state_dict(self.q_network.state_dict())
+            self.target_network.load_state_dict(self.network.state_dict())
+
+    def save_model(self, path: str) -> None:
+        torch.save(self.network.state_dict(), path)
+
+    def load_model(self, path: str) -> None:
+        state_dict = torch.load(path, map_location=self.device)
+        self.network.load_state_dict(state_dict)
+        self.target_network.load_state_dict(state_dict)
+
+
+# Single-env adapter
+class Agent:
+    def __init__(self, data_dir=None, seed=0, num_actions=18, total_frames=1_000_000, **kwargs):
+        self.core = RainbowCore(
+            num_envs=1,
+            seed=seed,
+            num_actions=num_actions,
+            total_frames=total_frames,
+            data_dir=data_dir,
+            **kwargs,
+        )
+        self.prev_obs: Optional[np.ndarray] = None
+        self.prev_reward = 0.0
+        self.prev_done = False
 
     def frame(self, observation_rgb8, reward, end_of_episode):
-        processed = self._preprocess(observation_rgb8)
-        self._ensure_state_stack(processed)
-        current_state = self._stack_frames()
+        obs_batch = observation_rgb8[None, ...]
+        if self.prev_obs is None:
+            self.core.reset(obs_batch)
+        actions = self.core.act(obs_batch)
+        if self.prev_obs is not None:
+            self.core.observe(
+                self.prev_obs,
+                np.array([self.prev_reward]),
+                np.array([self.prev_done]),
+                np.array([False]),
+            )
+            self.core.train_step()
 
-        done = end_of_episode > 0
-        if self.last_state is not None and self.last_action is not None:
-            transition = (self.last_state.copy(), self.last_action, reward, current_state.copy(), done)
-            result = self._append_n_step(transition)
-            if result is not None:
-                self.replay.add(*result)
-                if self.replay.size >= max(self.train_start, self.batch_size) and self.frame_count % self.train_freq == 0:
-                    self._train_step()
-                    self.q_network.reset_noise()
-                    self.target_network.reset_noise()
-        if done:
-            if len(self.n_step_buffer) >= self.n_step:
-                self.n_step_buffer.popleft()
-            while len(self.n_step_buffer) > 0:
-                result = self._aggregate_n_step()
-                self.replay.add(*result)
-                self.n_step_buffer.popleft()
-            self.state_stack = deque([processed] * self.stack_size, maxlen=self.stack_size)
-            current_state = self._stack_frames()
-            self.n_step_buffer.clear()
+        self.prev_obs = observation_rgb8[None, ...]
+        self.prev_reward = reward
+        self.prev_done = bool(end_of_episode > 0)
+        return int(actions[0])
 
-        self.frame_count += 1
-        action = self._select_action(current_state)
-        self.last_state = current_state.copy()
-        self.last_action = action
+    def save_model(self, path: str) -> None:
+        self.core.load_model(path)
 
-        return action
 
-    def save_model(self, filename):
-        torch.save(self.q_network.state_dict(), filename)
+# Vector Adapter
+
+
+class VectorRainbowAgent(VectorAgent):
+    def __init__(
+        self,
+        *,
+        num_envs: int,
+        seed: int,
+        num_actions: int,
+        results_dir: Optional[str] = None,
+        total_frames: int = 1_000_000,
+        **kwargs,
+    ):
+        self.core = RainbowCore(
+            num_envs=num_envs,
+            seed=seed,
+            num_actions=num_actions,
+            total_frames=total_frames,
+            data_dir=results_dir,
+            **kwargs,
+        )
+        self.num_envs = num_envs
+
+    def reset(self, num_envs: int) -> None:
+        if num_envs != self.num_envs:
+            raise ValueError(f"VectorRainbowAgent intialised for {self.num_envs} envs; recieved {num_envs}.")
+        # actual reset happens on first observe call
+        pass
+
+    def act(self, observations: np.ndarray) -> np.ndarray:
+        return self.core.act(observations)
+
+    def observe(self, next_observations, rewards, terminations, truncations, infos):
+        self.core.observe(next_observations, rewards, terminations, truncations)
+
+    def train_step(self) -> None:
+        self.core.train_step()
+
+    def save_model(self, path: str) -> None:
+        self.core.save_model(path)
+
+    def load_model(self, path: str) -> None:
+        self.core.load_model(path)

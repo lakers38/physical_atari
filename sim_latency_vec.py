@@ -48,8 +48,20 @@ class LatencyWrapper(gym.Wrapper):
         self.latency_model.last_action = 0
 
     def reset(self, **kwargs):
-        self.reset_latency_state()
-        return self.env.reset(**kwargs)
+        while True:
+            self.reset_latency_state()
+            obs, info = self.env.reset(**kwargs)
+            # Randomize starting state so vector env episodes decorrelate during sim runs.
+            noop_count = np.random.randint(0, 30)
+            terminated = False
+            truncated = False
+            for _ in range(noop_count):
+                obs, _, terminated, truncated, info = self.env.step(0)
+                if terminated or truncated:
+                    break
+            if terminated or truncated:
+                continue
+            return obs, info
 
     def step(self, action):
         env_action_idx = int(action)
@@ -259,6 +271,17 @@ def main():
                 elapsed = time.time() - start_time
                 sps = int(global_step / elapsed) if elapsed > 0 else 0
                 progress.set_postfix(sps=sps)
+                if run is not None:
+                    metrics = {"global_step": global_step, "sps": sps}
+                    core = getattr(agent, "core", None)
+                    if core is not None:
+                        metrics["train/loss"] = getattr(core, "last_loss", 0.0)
+                        if getattr(core, "loss_ema", None) is not None:
+                            metrics["train/loss_ema"] = core.loss_ema
+                        metrics["train/avg_q"] = getattr(core, "last_avg_q", 0.0)
+                        metrics["train/max_q"] = getattr(core, "last_max_q", 0.0)
+                        metrics["train/epsilon"] = getattr(core, "epsilon", 0.0)
+                    run.log(metrics, step=global_step)
 
             if args.checkpoint_interval and global_step % args.checkpoint_interval < args.num_envs:
                 ckpt_path = os.path.join(args.results_dir, f"checkpoint_{global_step}.pt")
