@@ -29,5 +29,5 @@ wandb/
 videos/
 
 test_outputs/
-outputs/
+*outputs/
 .claude/
