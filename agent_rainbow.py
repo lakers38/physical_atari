@@ -324,6 +324,8 @@ class RainbowCore:
         self.loss_ema = None
         self.last_avg_q = 0.0
         self.last_max_q = 0.0
+        self.last_td_error = 0.0
+        self.last_grad_norm = 0.0
 
         self.support = torch.linspace(self.v_min, self.v_max, self.num_atoms, device=self.device)
 
@@ -461,6 +463,12 @@ class RainbowCore:
 
         self.optimizer.zero_grad()
         loss.backward()
+        total_norm = 0.0
+        for p in self.network.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        self.last_grad_norm = math.sqrt(total_norm)
         if self.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.grad_clip)
         self.optimizer.step()
@@ -471,6 +479,8 @@ class RainbowCore:
             self.loss_ema = self.last_loss
         else:
             self.loss_ema = 0.95 * self.loss_ema + 0.05 * self.last_loss
+
+        self.last_td_error = float(sample_losses.detach().mean().item())
 
         self.training_steps += 1
         if self.training_steps % self.target_update_freq == 0:

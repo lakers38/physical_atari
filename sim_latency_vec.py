@@ -281,6 +281,21 @@ def main():
                         metrics["train/avg_q"] = getattr(core, "last_avg_q", 0.0)
                         metrics["train/max_q"] = getattr(core, "last_max_q", 0.0)
                         metrics["train/epsilon"] = getattr(core, "epsilon", 0.0)
+                        metrics["train/td_error"] = getattr(core, "last_td_error", 0.0)
+                        metrics["train/grad_norm"] = getattr(core, "last_grad_norm", 0.0)
+                        metrics["train/beta"] = getattr(core.replay, "beta", 0.0)
+                        if getattr(core.replay, "max_priority", None) is not None:
+                            metrics["replay/max_priority"] = core.replay.max_priority
+                        metrics["replay/fraction_filled"] = core.replay.size / float(core.replay.capacity)
+                        if hasattr(core, "optimizer"):
+                            metrics["train/lr"] = core.optimizer.param_groups[0]["lr"]
+                        # Average sigma for noisy layers helps track exploration decay.
+                        sigmas = []
+                        for module in core.network.modules():
+                            if hasattr(module, "weight_sigma"):
+                                sigmas.append(module.weight_sigma.detach().mean().item())
+                        if sigmas:
+                            metrics["train/noisy_sigma"] = float(np.mean(sigmas))
                     run.log(metrics, step=global_step)
 
             if args.checkpoint_interval and global_step % args.checkpoint_interval < args.num_envs:
