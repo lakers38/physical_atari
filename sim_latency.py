@@ -13,6 +13,7 @@ SUPPORTED_AGENTS = {
     "agent_dqn": "agent_dqn",
     "agent_delay_target": "agent_delay_target",
     "agent_random": "agent_random",
+    "agent_rainbow": "agent_rainbow",
 }
 
 
@@ -113,6 +114,29 @@ def build_agent(agent_type, results_dir, seed, num_actions, total_frames, load_m
         },
         "agent_random": {
             "gpu": -1,
+        },
+        "agent_rainbow": {
+            "gpu": 0,
+            "buffer_size": 500_000,
+            "batch_size": 32,
+            "learning_rate": 1e-4,
+            "gamma": 0.99,
+            "train_start": 50_000,
+            "train_freq": 1,
+            "target_update_freq": 2_000,
+            "stack_size": 4,
+            "obs_height": 84,
+            "obs_width": 84,
+            "n_step": 3,
+            "num_atoms": 51,
+            "v_min": -10.0,
+            "v_max": 10.0,
+            "priority_alpha": 0.5,
+            "priority_beta": 0.4,
+            "priority_beta_increment": 1e-6,
+            "priority_eps": 1e-6,
+            "epsilon_start": 0.0,
+            "epsilon_end": 0.0,
         },
     }[agent_type].copy()
 

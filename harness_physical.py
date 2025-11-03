@@ -44,6 +44,8 @@ def main(args):
         from agent_random import Agent
     elif args.agent_type == 'agent_dqn':
         from agent_dqn import Agent
+    elif args.agent_type == 'agent_rainbow':
+        from agent_rainbow import Agent
     else:
         raise ValueError(f"Invalid agent type={args.agent_type}")
 
@@ -194,6 +196,30 @@ def main(args):
                         "stack_size": args.dqn_stack_size,
                         "obs_height": args.dqn_obs_height,
                         "obs_width": args.dqn_obs_width,
+                    }
+                elif args.agent_type == 'agent_rainbow':
+                    agent_args = {
+                        "gpu": args.gpu,
+                        "buffer_size": args.rainbow_buffer_size,
+                        "batch_size": args.rainbow_batch_size,
+                        "learning_rate": args.rainbow_learning_rate,
+                        "gamma": args.rainbow_gamma,
+                        "train_start": args.rainbow_train_start,
+                        "train_freq": args.rainbow_train_freq,
+                        "target_update_freq": args.rainbow_target_update_freq,
+                        "stack_size": args.rainbow_stack_size,
+                        "obs_height": args.rainbow_obs_height,
+                        "obs_width": args.rainbow_obs_width,
+                        "n_step": args.rainbow_n_step,
+                        "num_atoms": args.rainbow_num_atoms,
+                        "v_min": args.rainbow_v_min,
+                        "v_max": args.rainbow_v_max,
+                        "priority_alpha": args.rainbow_priority_alpha,
+                        "priority_beta": args.rainbow_priority_beta,
+                        "priority_beta_increment": args.rainbow_priority_beta_increment,
+                        "priority_eps": args.rainbow_priority_eps,
+                        "epsilon_start": 0.0,
+                        "epsilon_end": 0.0,
                     }
                 else:
                     agent_args = {"gpu": args.gpu}
@@ -509,7 +535,7 @@ def get_argument_parser():
         '--agent_type',
         type=str,
         default="agent_delay_target",
-        choices=["agent_delay_target", "agent_random", "agent_dqn"],
+        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_rainbow"],
     )
     parser.add_argument(
         '--reduce_action_set',
@@ -542,6 +568,26 @@ def get_argument_parser():
     parser.add_argument('--dqn_stack_size', type=int, default=4)
     parser.add_argument('--dqn_obs_height', type=int, default=84)
     parser.add_argument('--dqn_obs_width', type=int, default=84)
+
+    # Rainbow-specific configuration
+    parser.add_argument('--rainbow_buffer_size', type=int, default=500_000)
+    parser.add_argument('--rainbow_batch_size', type=int, default=32)
+    parser.add_argument('--rainbow_learning_rate', type=float, default=1e-4)
+    parser.add_argument('--rainbow_gamma', type=float, default=0.99)
+    parser.add_argument('--rainbow_train_start', type=int, default=50_000)
+    parser.add_argument('--rainbow_train_freq', type=int, default=1)
+    parser.add_argument('--rainbow_target_update_freq', type=int, default=2_000)
+    parser.add_argument('--rainbow_stack_size', type=int, default=4)
+    parser.add_argument('--rainbow_obs_height', type=int, default=84)
+    parser.add_argument('--rainbow_obs_width', type=int, default=84)
+    parser.add_argument('--rainbow_n_step', type=int, default=3)
+    parser.add_argument('--rainbow_num_atoms', type=int, default=51)
+    parser.add_argument('--rainbow_v_min', type=float, default=-10.0)
+    parser.add_argument('--rainbow_v_max', type=float, default=10.0)
+    parser.add_argument('--rainbow_priority_alpha', type=float, default=0.5)
+    parser.add_argument('--rainbow_priority_beta', type=float, default=0.4)
+    parser.add_argument('--rainbow_priority_beta_increment', type=float, default=1e-6)
+    parser.add_argument('--rainbow_priority_eps', type=float, default=1e-6)
 
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--load_model', type=str, default=None)
