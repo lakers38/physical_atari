@@ -2,6 +2,7 @@
 
 import time
 import threading
+import math
 from dataclasses import dataclass
 import numpy as np
 import torch
@@ -33,7 +34,7 @@ class ReplayBuffer:
     Stores blocks of sequential experiences and samples batches with prioritization
     """
 
-    def __init__(self, sample_queue_list, batch_queue, priority_queue,
+    def __init__(self, sample_queue_list, batch_queue, priority_queue, stats_queue,
                  buffer_capacity=config.buffer_capacity,
                  sequence_len=config.learning_steps,
                  alpha=config.prio_exponent,
@@ -42,10 +43,10 @@ class ReplayBuffer:
 
         self.buffer_capacity = buffer_capacity
         self.sequence_len = sequence_len
-        self.num_sequences = buffer_capacity // self.sequence_len
         self.block_len = config.block_length
         self.num_blocks = self.buffer_capacity // self.block_len
-        self.seq_per_block = self.block_len // self.sequence_len
+        self.seq_per_block = math.ceil(self.block_len / self.sequence_len)
+        self.num_sequences = self.num_blocks * self.seq_per_block
 
         self.block_ptr = 0
 
@@ -62,6 +63,7 @@ class ReplayBuffer:
         self.last_training_steps = 0
         self.sum_loss = 0
 
+        # Using threading.Lock (works with fork-based multiprocessing)
         self.lock = threading.Lock()
 
         self.size = 0
@@ -69,7 +71,7 @@ class ReplayBuffer:
 
         self.buffer = [None] * self.num_blocks
 
-        self.sample_queue_list, self.batch_queue, self.priority_queue = sample_queue_list, batch_queue, priority_queue
+        self.sample_queue_list, self.batch_queue, self.priority_queue, self.stats_queue = sample_queue_list, batch_queue, priority_queue, stats_queue
 
     def __len__(self):
         return self.size
@@ -89,20 +91,39 @@ class ReplayBuffer:
 
         while True:
             print(f'buffer size: {self.size}')
-            print(f'buffer update speed: {(self.size-self.last_size)/log_interval}/s')
             self.last_size = self.size
             print(f'number of environment steps: {self.env_steps}')
+
+            # Prepare stats to send
+            stats = {
+                'buffer/size': self.size,
+                'buffer/utilization': self.size / self.buffer_capacity,
+                'env/total_steps': self.env_steps,
+            }
+
             if self.num_episodes != 0:
-                print(f'average episode return: {self.episode_reward/self.num_episodes:.4f}')
+                avg_episode_reward = self.episode_reward / self.num_episodes
+                print(f'average episode return: {avg_episode_reward:.4f}')
+                stats['env/episode_reward'] = avg_episode_reward
+                stats['env/num_episodes'] = self.num_episodes
                 self.episode_reward = 0
                 self.num_episodes = 0
+
             print(f'number of training steps: {self.training_steps}')
-            print(f'training speed: {(self.training_steps-self.last_training_steps)/log_interval}/s')
+            training_speed = (self.training_steps - self.last_training_steps) / log_interval
+            print(f'training speed: {training_speed}/s')
+            stats['train/steps_per_second'] = training_speed
+
             if self.training_steps != self.last_training_steps:
-                print(f'loss: {self.sum_loss/(self.training_steps-self.last_training_steps):.4f}')
+                avg_loss = self.sum_loss / (self.training_steps - self.last_training_steps)
+                print(f'loss: {avg_loss:.6f}')
                 self.last_training_steps = self.training_steps
                 self.sum_loss = 0
             print()
+
+            # Send stats to learner for wandb logging
+            if not self.stats_queue.full():
+                self.stats_queue.put(stats)
 
             if self.training_steps == config.training_steps:
                 break
@@ -148,11 +169,11 @@ class ReplayBuffer:
             episode_reward: Episode reward (if episode ended, else None)
         """
         with self.lock:
-            idxes = np.arange(self.block_ptr * self.seq_per_block,
-                            (self.block_ptr + 1) * self.seq_per_block,
-                            dtype=np.int64)
+            # Update only the actual number of sequences in this block
+            start_idx = self.block_ptr * self.seq_per_block
+            idxes = np.arange(start_idx, start_idx + block.num_sequences, dtype=np.int64)
 
-            self.priority_tree.update(idxes, priority)
+            self.priority_tree.update(idxes, priority[:block.num_sequences])
 
             if self.buffer[self.block_ptr] is not None:
                 self.size -= np.sum(self.buffer[self.block_ptr].learning_steps).item()
@@ -181,15 +202,33 @@ class ReplayBuffer:
         burn_in_steps, learning_steps, forward_steps = [], [], []
 
         with self.lock:
-            idxes, is_weights = self.priority_tree.sample(self.batch_size)
+            # Keep sampling until we have a full batch of valid sequences
+            valid_idxes = []
+            valid_is_weights = []
+
+            while len(valid_idxes) < self.batch_size:
+                remaining = self.batch_size - len(valid_idxes)
+                idxes, is_weights = self.priority_tree.sample(remaining)
+
+                block_idxes = idxes // self.seq_per_block
+                sequence_idxes = idxes % self.seq_per_block
+
+                # Filter out invalid samples (None blocks or out-of-range sequences)
+                for i, (block_idx, sequence_idx) in enumerate(zip(block_idxes, sequence_idxes)):
+                    block = self.buffer[block_idx]
+                    if block is not None and sequence_idx < block.num_sequences:
+                        valid_idxes.append(idxes[i])
+                        valid_is_weights.append(is_weights[i])
+
+            # Use only the valid samples
+            idxes = np.array(valid_idxes[:self.batch_size])
+            is_weights = np.array(valid_is_weights[:self.batch_size])
 
             block_idxes = idxes // self.seq_per_block
             sequence_idxes = idxes % self.seq_per_block
 
             for block_idx, sequence_idx in zip(block_idxes, sequence_idxes):
                 block = self.buffer[block_idx]
-
-                assert sequence_idx < block.num_sequences, f'index is {sequence_idx} but size is {block.num_sequences}'
 
                 burn_in_step = block.burn_in_steps[sequence_idx]
                 learning_step = block.learning_steps[sequence_idx]
@@ -277,3 +316,4 @@ class ReplayBuffer:
 
         self.training_steps += 1
         self.sum_loss += loss
+        # print(f"[DEBUG update_priorities] loss received: {loss}, sum_loss now: {self.sum_loss}, training_steps: {self.training_steps}")

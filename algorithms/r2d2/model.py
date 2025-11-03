@@ -82,7 +82,7 @@ class Network(nn.Module):
             state: AgentState with obs, last_action, last_reward, hidden_state
 
         Returns:
-            q_value: Q-values for each action (1, action_dim)
+            q_value: Q-values for each action [action_dim]
             recurrent_output: New hidden state tuple
         """
         latent = self.feature(state.obs / 255)
@@ -97,7 +97,8 @@ class Network(nn.Module):
         val = self.value(hidden)
         q_value = val + adv - adv.mean(1, keepdim=True)
 
-        return q_value.squeeze(0), recurrent_output
+        # Squeeze all singleton dimensions: [1, 1, action_dim] -> [action_dim]
+        return q_value.squeeze(), recurrent_output
 
     def calculate_q_(self, obs, last_action, last_reward, hidden_state, burn_in_steps, learning_steps, forward_steps):
         """

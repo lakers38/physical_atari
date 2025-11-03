@@ -31,7 +31,7 @@ target_net_update_interval = 2500  # Update target network every N steps
 save_interval = 10_000  # Save model every N steps
 
 # Distributed training
-num_actors = 1  # Number of parallel actors
+num_actors = 8  # Number of parallel actors
 base_explore_eps = 0.4  # Base epsilon for exploration
 alpha = 7  # Epsilon schedule exponent
 

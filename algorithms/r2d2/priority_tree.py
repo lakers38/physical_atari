@@ -41,6 +41,11 @@ class PriorityTree:
                 tree_idx = (tree_idx - 1) // 2
                 self.tree[tree_idx] += delta
 
+        # Update size to track maximum valid index
+        if len(idxes) > 0:
+            max_idx = np.max(idxes) + 1
+            self.size = max(self.size, max_idx)
+
     def sample(self, batch_size):
         """
         Sample batch_size indices based on priorities
@@ -60,7 +65,8 @@ class PriorityTree:
         segment_size = p_sum / batch_size
 
         # Vectorized: sample uniformly from each segment
-        prefixsums = np.arange(0, p_sum, segment_size, dtype=np.float64)
+        # Use explicit array creation to avoid floating point precision issues with np.arange
+        prefixsums = np.array([i * segment_size for i in range(batch_size)], dtype=np.float64)
         prefixsums += np.random.uniform(0, segment_size, batch_size)
 
         # Vectorized tree traversal

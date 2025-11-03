@@ -2,7 +2,7 @@
 
 import random
 import math
-from typing import Tuple, Optional
+from typing import Any, Tuple, Optional
 import numpy as np
 import torch
 from r2d2.model import Network, AgentState
@@ -112,7 +112,8 @@ class LocalBuffer:
 
         actions = np.array(self.action_buffer, dtype=np.uint8)
 
-        qval_buffer = np.concatenate(self.qval_buffer)
+        # Stack q_values: list of [action_dim] -> [size, action_dim]
+        qval_buffer = np.stack(self.qval_buffer)
         reward_buffer = self.reward_buffer + [0 for _ in range(self.forward_steps - 1)]
         n_step_reward = np.convolve(reward_buffer,
                                      [self.gamma ** (self.forward_steps - 1 - i) for i in range(self.forward_steps)],
@@ -132,7 +133,9 @@ class LocalBuffer:
         target_qval = qval_buffer[np.arange(self.size), actions]
 
         td_errors = np.abs(n_step_reward + n_step_gamma * max_qval - target_qval, dtype=np.float32)
-        priorities = np.zeros(self.block_length // self.learning_steps, dtype=np.float32)
+        # Use ceil to handle partial sequences: ceil(120/80) = 2, not floor(120/80) = 1
+        max_num_sequences = math.ceil(self.block_length / self.learning_steps)
+        priorities = np.zeros(max_num_sequences, dtype=np.float32)
         priorities[:num_sequences] = calculate_mixed_td_errors(td_errors, learning_steps)
 
         # Save burn-in information for next block
@@ -191,18 +194,29 @@ class Actor:
                 if random.random() < self.epsilon:
                     action = self.env.action_space.sample()
                 else:
-                    action = torch.argmax(q_value, 0).item()
+                    # q_value shape: [action_dim] = [9]
+                    # Select action with highest Q-value
+                    action = q_value.argmax().item()
 
                 # Apply action in env
-                next_obs, reward, done, truncated, _ = self.env.step(action)
-                done = done or truncated
+                step_result = self.env.step(action)
+                if len(step_result) == 5:
+                    # Gymnasium API (obs, reward, terminated, truncated, info)
+                    next_obs, reward, done, truncated, _ = step_result
+                    done = done or truncated
+                else:
+                    # Old gym API (obs, reward, done, info)
+                    next_obs, reward, done, _ = step_result
 
                 agent_state.update(next_obs, action, reward, hidden)
 
                 episode_steps += 1
                 actor_steps += 1
 
-                self.local_buffer.add(action, reward, next_obs, q_value.numpy(), torch.cat(hidden).numpy())
+                # hidden is tuple (h, c) with shapes [num_layers, batch_size, hidden_dim]
+                # Concatenate and squeeze batch dimension: [2, 1, hidden_dim] -> [2, hidden_dim]
+                hidden_np = torch.cat(hidden).squeeze(1).numpy()
+                self.local_buffer.add(action, reward, next_obs, q_value.numpy(), hidden_np)
 
                 if done:
                     block = self.local_buffer.finish()
@@ -227,9 +241,17 @@ class Actor:
 
     def reset(self):
         """Reset environment and local buffer"""
-        obs, _ = self.env.reset()
+        reset_result = self.env.reset()
+        if isinstance(reset_result, tuple):
+            # Gymnasium API returns (obs, info)
+            obs, _ = reset_result
+        else:
+            # Old gym API returns just obs
+            obs = reset_result
         self.local_buffer.reset(obs)
 
-        state = AgentState(torch.from_numpy(obs).unsqueeze(0).unsqueeze(0), self.action_dim)
+        # obs shape: [C, H, W] = [1, 84, 84]
+        # unsqueeze(0) adds batch dimension: [B, C, H, W] = [1, 1, 84, 84]
+        state = AgentState(torch.from_numpy(obs).unsqueeze(0), self.action_dim)
 
         return state
