@@ -51,6 +51,8 @@ class Learner:
         self.target_net_update_interval = target_net_update_interval
         self.save_interval = save_interval
 
+        self.batched_data = []
+
         self.shared_model = model
 
         self.game_name = game_name

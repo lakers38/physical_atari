@@ -19,6 +19,12 @@ class AgentState:
 
     def __post_init__(self):
         self.last_action = torch.zeros((1, self.action_dim), dtype=torch.float32)
+        # Ensure obs has batch dimension: (batch, channels, height, width)
+        if isinstance(self.obs, torch.Tensor):
+            if self.obs.dim() == 3:
+                self.obs = self.obs.unsqueeze(0)  # Add batch dimension
+        else:
+            self.obs = torch.from_numpy(self.obs).unsqueeze(0) if self.obs.ndim == 3 else torch.from_numpy(self.obs)
 
     def update(self, obs, last_action, last_reward, hidden):
         """Update state with new observation and action"""
@@ -46,8 +52,9 @@ class Network(nn.Module):
         self.max_forward_steps = config.forward_steps
 
         # CNN feature extractor (Nature DQN architecture)
+        # Input: (4, 84, 84) - 4 stacked grayscale frames
         self.feature = nn.Sequential(
-            nn.Conv2d(1, 32, 8, 4),
+            nn.Conv2d(4, 32, 8, 4),  # Changed from 1 to 4 channels for frame stacking
             nn.ReLU(True),
             nn.Conv2d(32, 64, 4, 2),
             nn.ReLU(True),

@@ -6,6 +6,7 @@ import gymnasium as gym
 import ale_py
 import numpy as np
 import cv2
+from collections import deque
 import config
 
 # Import latency model for hardware latency simulation
@@ -107,6 +108,7 @@ class WarpFrame(gym.ObservationWrapper):
     def __init__(self, env, width=84, height=84):
         """
         Warp frames to 84x84 as done in the Nature paper and later work.
+        Outputs (84, 84) - single frame without channel dimension.
         """
         super().__init__(env)
         self._width = width
@@ -115,19 +117,62 @@ class WarpFrame(gym.ObservationWrapper):
         self.observation_space = gym.spaces.Box(
             low=0,
             high=255,
-            shape=(1, self._height, self._width),
+            shape=(self._height, self._width),  # (84, 84)
             dtype=np.uint8,
         )
 
     def observation(self, obs):
-
+        # Resize to 84x84
         obs = cv2.resize(
             obs, (self._width, self._height), interpolation=cv2.INTER_AREA
         )
-
-        obs = np.expand_dims(obs, 0)
-
+        # Return without adding channel dimension - FrameStack will handle stacking
         return obs
+
+
+class FrameStack(gym.Wrapper):
+    """
+    Stack the last n_frames observations.
+
+    This provides temporal information by stacking recent frames.
+    Output shape: (n_frames, height, width) e.g., (4, 84, 84)
+    """
+    def __init__(self, env, n_frames=4):
+        """
+        Args:
+            env: Environment to wrap
+            n_frames: Number of frames to stack (default: 4)
+        """
+        super().__init__(env)
+        self.n_frames = n_frames
+        self.frames = deque(maxlen=n_frames)
+
+        # Update observation space to reflect stacked frames
+        shape = env.observation_space.shape  # Should be (84, 84)
+        self.observation_space = gym.spaces.Box(
+            low=0,
+            high=255,
+            shape=(n_frames, *shape),  # (4, 84, 84)
+            dtype=np.uint8
+        )
+
+    def reset(self, **kwargs):
+        """Reset environment and initialize frame stack"""
+        obs, info = self.env.reset(**kwargs)
+        # Fill the frame stack with the initial observation
+        for _ in range(self.n_frames):
+            self.frames.append(obs)
+        return self._get_observation(), info
+
+    def step(self, action):
+        """Step environment and update frame stack"""
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        self.frames.append(obs)
+        return self._get_observation(), reward, terminated, truncated, info
+
+    def _get_observation(self):
+        """Stack frames along first axis"""
+        return np.stack(self.frames, axis=0)
 
 
 def create_env(env_name=config.game_name, noop_start=True, render_mode=None,
@@ -165,7 +210,13 @@ def create_env(env_name=config.game_name, noop_start=True, render_mode=None,
         env = LatencyWrapper(env, latency_model_dir=latency_model_dir)
         print(f"[create_env] Latency simulation enabled for {env_name}")
 
+    # Apply WarpFrame to resize to 84x84
     env = WarpFrame(env)
+
+    # Apply FrameStack to stack last 4 frames (provides temporal info)
+    env = FrameStack(env, n_frames=4)
+
+    # Apply NoopReset after frame stacking
     if noop_start:
         env = NoopResetEnv(env)
 

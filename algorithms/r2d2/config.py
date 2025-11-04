@@ -1,7 +1,7 @@
 """Default configuration for R2D2"""
 
 # Observation settings
-obs_shape = (1, 84, 84)  # (channels, height, width) - grayscale
+obs_shape = (4, 84, 84)  # (channels, height, width) - grayscale
 
 # Network architecture
 hidden_dim = 512  # LSTM hidden dimension
@@ -13,7 +13,7 @@ grad_norm = 40  # Gradient clipping norm
 gamma = 0.997  # Discount factor
 
 # Replay buffer
-buffer_capacity = 1_000_000  # Total capacity in frames
+buffer_capacity = 250_000  # Total capacity in frames
 block_length = 120  # Length of each stored block (burn_in + learning)
 burn_in_steps = 40  # Steps to warm up LSTM
 learning_steps = 80  # Steps used for learning
@@ -31,8 +31,8 @@ target_net_update_interval = 2500  # Update target network every N steps
 save_interval = 10_000  # Save model every N steps
 
 # Distributed training
-num_actors = 8  # Number of parallel actors
-base_explore_eps = 0.4  # Base epsilon for exploration
+num_actors = 4  # Number of parallel actors
+base_explore_eps = 0.6  # Base epsilon for exploration
 alpha = 7  # Epsilon schedule exponent
 
 # Environment

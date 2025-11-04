@@ -63,6 +63,9 @@ class ReplayBuffer:
         self.last_training_steps = 0
         self.sum_loss = 0
 
+        self.sampled_env_steps = 0
+        self.last_sampled_env_steps = 0
+
         # Using threading.Lock (works with fork-based multiprocessing)
         self.lock = threading.Lock()
 
@@ -113,6 +116,10 @@ class ReplayBuffer:
             training_speed = (self.training_steps - self.last_training_steps) / log_interval
             print(f'training speed: {training_speed}/s')
             stats['train/steps_per_second'] = training_speed
+            env_steps_trained = self.sampled_env_steps - self.last_sampled_env_steps
+            print(f'env steps trained last period: {env_steps_trained}')
+            stats['train/env_steps_used_last_period'] = env_steps_trained
+            self.last_sampled_env_steps = self.sampled_env_steps
 
             if self.training_steps != self.last_training_steps:
                 avg_loss = self.sum_loss / (self.training_steps - self.last_training_steps)
@@ -263,6 +270,9 @@ class ReplayBuffer:
             batch_obs = pad_sequence(batch_obs, batch_first=True)
             batch_last_action = pad_sequence(batch_last_action, batch_first=True)
             batch_last_reward = pad_sequence(batch_last_reward, batch_first=True)
+
+            steps_used = int(sum(learning_steps))
+            self.sampled_env_steps += steps_used
 
             is_weights = np.repeat(is_weights, learning_steps)
 

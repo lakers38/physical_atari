@@ -18,17 +18,20 @@
 # This agent wraps R2D2 to work with the physical_atari harness
 
 import os
-from collections import deque
+import sys
 from typing import Optional
 
 import cv2
 import numpy as np
 import torch
 
+# Add algorithms directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'algorithms'))
+
 from framework.Logger import logger
-from r2d2.model import Network, AgentState
-from r2d2.actor import LocalBuffer, calculate_mixed_td_errors
-from r2d2.learner import Learner
+from algorithms.r2d2.model import Network, AgentState
+from algorithms.r2d2.actor import LocalBuffer
+from algorithms.r2d2 import config as r2d2_config
 
 
 class Agent:
@@ -38,27 +41,26 @@ class Agent:
         # Configuration
         self.num_actions = num_actions
         self.total_frames = total_frames
-        self.frame_skip = 4
         self.seed = seed
         self.data_dir = data_dir
         self.gpu = 0  # Default GPU
 
-        # R2D2 hyperparameters (can be overridden via kwargs)
-        self.learning_rate = 1e-4
-        self.gamma = 0.997
+        # R2D2 hyperparameters from config (can be overridden via kwargs)
+        self.learning_rate = r2d2_config.lr
+        self.gamma = r2d2_config.gamma
         self.epsilon = 0.01  # Fixed epsilon for physical env (mostly greedy)
-        self.hidden_dim = 512
-        self.burn_in_steps = 40
-        self.learning_steps = 80
-        self.forward_steps = 5
-        self.block_length = 120
-        self.grad_norm = 40
-        self.target_update_freq = 2500
-        self.batch_size = 1  # Physical env: online learning
+        self.hidden_dim = r2d2_config.hidden_dim
+        self.burn_in_steps = r2d2_config.burn_in_steps
+        self.learning_steps = r2d2_config.learning_steps
+        self.forward_steps = r2d2_config.forward_steps
+        self.block_length = r2d2_config.block_length
+        self.grad_norm = r2d2_config.grad_norm
+        self.target_update_freq = r2d2_config.target_net_update_interval
+        self.frame_skip = 4  # Physical env: act every 4 frames
+        self.resize_to_84 = True
 
         # Model settings
         self.load_model_path = None
-        self.resize_to_84 = True
 
         # Override defaults with kwargs
         for key, value in kwargs.items():
@@ -73,13 +75,10 @@ class Agent:
             self.load_model_path = kwargs['load_file']
             logger.info(f"agent_r2d2: Set load_model_path from load_file = {self.load_model_path}")
 
-        # Frame buffering (maintain history for LSTM)
-        self.frame_history = deque(maxlen=self.burn_in_steps + self.learning_steps + self.forward_steps)
+        # State tracking
         self.step_count = 0
         self.last_action = 0
-
-        # LSTM hidden state
-        self.hidden_state = None
+        self.last_reward = 0
 
         # Observation shape: (1, 84, 84) - grayscale, channels-first
         height, width = (84, 84) if self.resize_to_84 else (210, 160)
@@ -101,17 +100,32 @@ class Agent:
         # Load pre-trained model if available
         if self.load_model_path and os.path.exists(self.load_model_path):
             logger.info(f"agent_r2d2: Loading model from {self.load_model_path}")
-            state_dict = torch.load(self.load_model_path, map_location=self.device)
-            # Handle different save formats
-            if isinstance(state_dict, tuple):
-                state_dict = state_dict[0]  # (state_dict, num_updates, env_steps, time)
-            self.model.load_state_dict(state_dict)
+            checkpoint = torch.load(self.load_model_path, map_location=self.device)
+
+            # Handle different checkpoint formats
+            if isinstance(checkpoint, dict):
+                # New format: dict with 'model_state_dict' key
+                if 'model_state_dict' in checkpoint:
+                    self.model.load_state_dict(checkpoint['model_state_dict'])
+                    logger.info(f"agent_r2d2: Loaded from new checkpoint format (num_updates={checkpoint.get('num_updates', 'unknown')})")
+                else:
+                    # Dict is the state dict itself
+                    self.model.load_state_dict(checkpoint)
+                    logger.info(f"agent_r2d2: Loaded state dict directly")
+            elif isinstance(checkpoint, tuple):
+                # Old format: (state_dict, num_updates, env_steps, time)
+                self.model.load_state_dict(checkpoint[0])
+                logger.info(f"agent_r2d2: Loaded from old tuple format (num_updates={checkpoint[1]})")
+            else:
+                logger.error(f"agent_r2d2: Unknown checkpoint format: {type(checkpoint)}")
         else:
-            logger.info(f"agent_r2d2: Creating new R2D2 model")
+            if self.load_model_path:
+                logger.warning(f"agent_r2d2: Model path specified but not found: {self.load_model_path}")
+            logger.info(f"agent_r2d2: Creating new R2D2 model (random weights)")
 
         # Setup local buffer for experience collection
         self.local_buffer = LocalBuffer(
-            num_actions,
+            action_dim=num_actions,
             forward_steps=self.forward_steps,
             burn_in_steps=self.burn_in_steps,
             learning_steps=self.learning_steps,
@@ -120,24 +134,11 @@ class Agent:
             block_length=self.block_length
         )
 
-        # Setup training (optional - for online learning)
-        self.target_model = Network(num_actions, obs_shape=obs_shape, hidden_dim=self.hidden_dim)
-        self.target_model.to(self.device)
-        self.target_model.load_state_dict(self.model.state_dict())
-        self.target_model.eval()
-
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, eps=1.5e-4)
-        self.loss_fn = torch.nn.MSELoss(reduction='none')
-
-        # Training tracking
-        self.training_step = 0
-        self.frames_since_train = 0
-        self.train_losses = []  # Required by harness_physical.py
-        self.experience_buffer = []  # Store experiences for batch training
+        # Training tracking (required by harness_physical.py)
+        self.train_losses = []  # Required by harness_physical.py for plotting
 
         # Agent state
         self.agent_state = None
-        self.last_reward = 0
 
         logger.info(f"agent_r2d2: Initialized successfully")
 
@@ -168,78 +169,81 @@ class Agent:
         """
         self.step_count += 1
 
-        # Preprocess frame
+        # Preprocess frame to grayscale (H, W) uint8
         processed_frame = self.preprocess_frame(observation_rgb8)
 
         # Only act every frame_skip frames
         if self.step_count % self.frame_skip != 0:
             return self.last_action
 
-        # Add to frame history
-        self.frame_history.append(processed_frame)
+        # Create observation tensor (1, 1, H, W) and convert to device
+        # processed_frame is (H, W), we need (batch=1, channels=1, H, W)
+        obs_tensor = torch.from_numpy(processed_frame).unsqueeze(0).unsqueeze(0).float().to(self.device)
 
-        # Need at least one frame to act
-        if len(self.frame_history) < 1:
-            return self.last_action
-
-        # Create observation tensor (1, 84, 84)
-        obs = torch.from_numpy(processed_frame).unsqueeze(0).unsqueeze(0).float().to(self.device)
-
-        # Initialize agent state if needed
+        # Initialize agent state on first frame
         if self.agent_state is None:
-            self.agent_state = AgentState(obs, self.num_actions)
+            # AgentState expects obs with batch dimension: (1, 1, H, W)
+            self.agent_state = AgentState(obs_tensor, self.num_actions)
+            # Reset local buffer with initial observation (numpy array)
+            self.local_buffer.reset(processed_frame)
 
-        # Update agent state with previous action and reward
-        self.agent_state.update(obs, self.last_action, self.last_reward, self.hidden_state)
+        # Update agent state with current obs and previous action/reward
+        # Note: agent_state.update() expects obs tensor, action int, reward float, hidden tuple
+        self.agent_state.update(obs_tensor, self.last_action, self.last_reward, self.agent_state.hidden_state)
 
         # Get action from model
         with torch.no_grad():
-            q_value, hidden = self.model(self.agent_state)
+            # model.forward() returns (q_value, hidden_state)
+            # q_value shape: [action_dim] (squeezed from [1, 1, action_dim])
+            # hidden_state: tuple (h, c) each with shape [1, 1, hidden_dim]
+            q_value, hidden_state = self.model(self.agent_state)
 
         # Epsilon-greedy action selection
         if np.random.random() < self.epsilon:
             action = np.random.randint(self.num_actions)
         else:
-            action = torch.argmax(q_value, 0).item()
+            # q_value is already squeezed to [action_dim]
+            action = torch.argmax(q_value).item()
 
-        # Update state
+        # Store experience in local buffer for tracking
+        # hidden_state is tuple (h, c), concat to [2, 1, hidden_dim] then squeeze to [2, hidden_dim]
+        hidden_np = torch.cat(hidden_state).squeeze(1).cpu().numpy()
+        self.local_buffer.add(
+            action,
+            reward,
+            processed_frame,
+            q_value.cpu().numpy(),
+            hidden_np
+        )
+
+        # Update state for next frame
         self.last_action = action
         self.last_reward = reward
-        self.hidden_state = hidden
-
-        # Store experience in local buffer (for potential online training)
-        if len(self.frame_history) > 1:  # Need previous frame
-            prev_frame = self.frame_history[-2]
-            self.local_buffer.add(
-                self.last_action,
-                reward,
-                processed_frame,
-                q_value.cpu().numpy(),
-                torch.cat(hidden).cpu().numpy()
-            )
 
         # Reset on episode end
         if end_of_episode:
-            self.hidden_state = None
-            self.agent_state = None
-
-            # Optionally perform training update
+            # Finish block
             if len(self.local_buffer) > 0:
-                # Finish block and extract training data
-                block_data = self.local_buffer.finish()
+                # finish() returns [block, priorities, episode_reward or None]
+                block_data = self.local_buffer.finish()  # Episode done, no bootstrapping
                 # For now, just track losses without training
-                # (online training can be added later)
                 self.train_losses.append(0.0)
+
+            # Reset agent state for next episode
+            self.agent_state = None
 
         return action
 
     def save_model(self, filename):
-        """Save R2D2 model to disk"""
+        """Save R2D2 model to disk using new checkpoint format"""
         try:
-            torch.save(
-                (self.model.state_dict(), self.training_step, self.step_count, 0),
-                filename
-            )
+            checkpoint = {
+                'model_state_dict': self.model.state_dict(),
+                'num_updates': 0,  # Physical env doesn't do gradient updates
+                'env_steps': self.step_count,
+                'training_time_minutes': 0,
+            }
+            torch.save(checkpoint, filename)
             logger.info(f"agent_r2d2: Model saved to {filename}")
         except Exception as e:
             logger.error(f"agent_r2d2: Error saving model: {e}")

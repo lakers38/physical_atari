@@ -39,7 +39,7 @@ except ImportError:
     WandbCallback = None
 
 # Import the latency model
-sys.path.append(os.path.join(os.path.dirname(__file__), 'latency_wrap'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
 from wrapper_v0_2 import LatencyModel
 
 # Register ALE environments
@@ -55,7 +55,7 @@ class LatencyWrapper(gym.Wrapper):
     real-world delay between action selection and execution.
     """
 
-    def __init__(self, env, latency_model_dir="./latency_wrap"):
+    def __init__(self, env, latency_model_dir):
         """
         Args:
             env: The Gymnasium environment to wrap
@@ -101,7 +101,7 @@ class VecLatencyWrapper:
     Works with VecEnv from stable-baselines3.
     """
 
-    def __init__(self, venv, latency_model_dir="./latency_wrap"):
+    def __init__(self, venv, latency_model_dir):
         """
         Args:
             venv: VecEnv to wrap
@@ -157,8 +157,8 @@ def create_atari_env_with_latency(
     env_name,
     n_envs=4,
     seed=0,
-    simulate_latency=True,
-    latency_model_dir="./latency_wrap",
+    simulate_latency=False,
+    latency_model_dir=None,
     monitor_path=None,
     video_path=None,
     record_video=False,
@@ -220,7 +220,7 @@ def train_agent(
     env_name="ALE/MsPacman-v5",
     total_timesteps=1000000,
     simulate_latency=True,
-    latency_model_dir="./latency_wrap",
+    latency_model_dir=None,
     experiment_dir=None,
     device="cuda",
     learning_rate=2.5e-4,
@@ -457,7 +457,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="outputs_sim",
+        default="outputs/ppo/",
         help="Base directory for outputs"
     )
     parser.add_argument(
@@ -529,7 +529,7 @@ def main():
 
     # Generate run name (mode-name-timestamp)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"{args.mode}-{generate_slug(2)}-{timestamp}"
+    run_name = f"{timestamp}-ppo-{args.mode}-{generate_slug(2)}"
 
     # Create experiment directory using run_name
     env_dir_name = args.env.replace('/', '_')
