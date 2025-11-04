@@ -7,7 +7,7 @@ obs_shape = (1, 84, 84)  # (channels, height, width) - grayscale
 hidden_dim = 512  # LSTM hidden dimension
 
 # Training hyperparameters
-lr = 1e-4  # Learning rate
+lr = 1e-3  # Learning rate
 eps_adam = 1.5e-4  # Adam epsilon
 grad_norm = 40  # Gradient clipping norm
 gamma = 0.997  # Discount factor

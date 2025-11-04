@@ -5,7 +5,7 @@ from typing import Tuple, Optional
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from r2d2 import config
+import config
 
 
 @dataclass

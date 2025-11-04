@@ -1,10 +1,21 @@
 '''Gymnasium environment wrapper for R2D2.
 Updated for Gymnasium 1.1.1 API (5-value step, 2-value reset)'''
+import os
+import sys
 import gymnasium as gym
 import ale_py
 import numpy as np
 import cv2
-from r2d2 import config
+import config
+
+# Import latency model for hardware latency simulation
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
+try:
+    from wrapper_v0_2 import LatencyModel
+    LATENCY_AVAILABLE = True
+except ImportError:
+    LATENCY_AVAILABLE = False
+    LatencyModel = None
 
 # Register ALE environments
 gym.register_envs(ale_py)
@@ -39,6 +50,58 @@ class NoopResetEnv(gym.Wrapper):
         return self.env.step(action)
 
 
+class LatencyWrapper(gym.Wrapper):
+    """
+    Gymnasium wrapper that applies the LatencyModel to simulate hardware latency.
+
+    The LatencyModel maintains a history of the past 30 actions and uses a neural
+    network to predict which action should actually be executed, simulating the
+    real-world delay between action selection and execution.
+    """
+
+    def __init__(self, env, latency_model_dir="./latency_wrap"):
+        """
+        Args:
+            env: The Gymnasium environment to wrap
+            latency_model_dir: Directory containing the LatencyModel weights
+        """
+        super().__init__(env)
+        if not LATENCY_AVAILABLE or LatencyModel is None:
+            raise ImportError(
+                "LatencyModel not available. Please ensure latency_wrap/wrapper_v0_2.py exists."
+            )
+        self.latency_model = LatencyModel(directory_with_weights=latency_model_dir)
+        print(f"[LatencyWrapper] Initialized with weights from {latency_model_dir}")
+
+    def step(self, action):
+        """
+        Step function with latency simulation.
+
+        Args:
+            action: The action selected by the agent
+
+        Returns:
+            obs, reward, terminated, truncated, info
+        """
+        # Convert action to ALE action format and apply latency model
+        ale_action = ale_py.Action(int(action))
+        delayed_action = self.latency_model.act(ale_action)
+
+        # Execute the delayed action in the environment
+        return self.env.step(int(delayed_action))
+
+    def reset(self, **kwargs):
+        """Reset the environment and latency model state"""
+        # Reset the latency model's action queue to NOOPs
+        self.latency_model.action_queue = []
+        for _ in range(30):
+            self.latency_model.action_queue.append(
+                self.latency_model._LatencyModel__one_hot_encode(0, 0, 36)
+            )
+        self.latency_model.last_action = 0
+
+        return self.env.reset(**kwargs)
+
 
 class WarpFrame(gym.ObservationWrapper):
     def __init__(self, env, width=84, height=84):
@@ -67,7 +130,21 @@ class WarpFrame(gym.ObservationWrapper):
         return obs
 
 
-def create_env(env_name=config.game_name, noop_start=True, render_mode=None):
+def create_env(env_name=config.game_name, noop_start=True, render_mode=None,
+               simulate_latency=False, latency_model_dir="./latency_wrap"):
+    """
+    Create Atari environment with preprocessing and optional latency simulation.
+
+    Args:
+        env_name: Atari environment name (e.g., "ALE/MsPacman-v5")
+        noop_start: If True, apply NoopResetEnv wrapper
+        render_mode: Render mode for the environment (None or "rgb_array")
+        simulate_latency: If True, apply LatencyWrapper to simulate hardware delays
+        latency_model_dir: Directory containing LatencyModel weights
+
+    Returns:
+        Wrapped Gymnasium environment
+    """
     env = gym.make(
         env_name,
         obs_type='grayscale',
@@ -76,6 +153,17 @@ def create_env(env_name=config.game_name, noop_start=True, render_mode=None):
         full_action_space=True,
         render_mode=render_mode
     )
+
+    # Apply latency wrapper BEFORE other wrappers if requested
+    # This ensures latency affects the raw actions
+    if simulate_latency:
+        if not LATENCY_AVAILABLE:
+            raise ImportError(
+                "Latency simulation requested but LatencyModel not available. "
+                "Please ensure latency_wrap/wrapper_v0_2.py exists."
+            )
+        env = LatencyWrapper(env, latency_model_dir=latency_model_dir)
+        print(f"[create_env] Latency simulation enabled for {env_name}")
 
     env = WarpFrame(env)
     if noop_start:

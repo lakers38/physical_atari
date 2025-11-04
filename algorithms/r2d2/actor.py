@@ -5,9 +5,9 @@ import math
 from typing import Any, Tuple, Optional
 import numpy as np
 import torch
-from r2d2.model import Network, AgentState
-from r2d2.replay_buffer import Block
-from r2d2 import config
+from model import Network, AgentState
+from replay_buffer import Block
+import config
 
 
 def calculate_mixed_td_errors(td_error, learning_steps):

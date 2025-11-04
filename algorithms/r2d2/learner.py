@@ -8,9 +8,9 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
-from r2d2.model import Network
-from r2d2.actor import calculate_mixed_td_errors
-from r2d2 import config
+from model import Network
+from actor import calculate_mixed_td_errors
+import config
 
 
 class Learner:
@@ -30,7 +30,8 @@ class Learner:
                  models_dir: str = 'models',
                  use_wandb: bool = False,
                  env_name: Optional[str] = None,
-                 video_dir: Optional[str] = None):
+                 video_dir: Optional[str] = None,
+                 initial_num_updates: int = 0):
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.online_net = deepcopy(model)
@@ -44,13 +45,11 @@ class Learner:
         self.batch_queue = batch_queue
         self.priority_queue = priority_queue
         self.stats_queue = stats_queue
-        self.num_updates = 0
+        self.num_updates = initial_num_updates
         self.done = False
 
         self.target_net_update_interval = target_net_update_interval
         self.save_interval = save_interval
-
-        self.batched_data = []
 
         self.shared_model = model
 
@@ -81,8 +80,8 @@ class Learner:
 
         try:
             from gymnasium.wrappers import RecordVideo
-            from r2d2.environment import create_env
-            from r2d2.model import AgentState
+            from environment import create_env
+            from model import AgentState
             import numpy as np
 
             # Create environment with render_mode for video recording
@@ -284,10 +283,15 @@ class Learner:
             if self.num_updates % self.save_interval == 0:
                 save_path = os.path.join(self.models_dir, f'{self.num_updates}.pth')
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                torch.save(
-                    (self.online_net.state_dict(), self.num_updates, env_steps, (time.time() - start_time) / 60),
-                    save_path
-                )
+                checkpoint = {
+                    'model_state_dict': self.online_net.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'num_updates': self.num_updates,
+                    'env_steps': env_steps,
+                    'training_time_minutes': (time.time() - start_time) / 60,
+                    'target_net_state_dict': self.target_net.state_dict()
+                }
+                torch.save(checkpoint, save_path)
                 print(f"Model saved to {save_path}")
 
                 # Record evaluation video
