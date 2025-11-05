@@ -459,6 +459,7 @@ class MEMECore:
         self.ema_decay = ema_decay
         self.train_interval = max(1, int(train_interval))
         self._train_call_count = 0
+        self.last_metrics: Dict[str, float] = {}
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -735,6 +736,8 @@ class MEMECore:
         if self._train_call_count % self.train_interval != 0:
             return
 
+        self.last_metrics = {}
+
         sequences, indices, weights = self.replay.sample(self.batch_size)
         if not sequences:
             return
@@ -759,6 +762,13 @@ class MEMECore:
         inv_count = 1.0 / float(valid_count)
         self.optimizer.zero_grad()
         self.network.reset_noise()
+        total_loss_vals: List[float] = []
+        behaviour_loss_vals: List[float] = []
+        aux_loss_vals: List[float] = []
+        policy_loss_vals: List[float] = []
+        td_abs_mean_vals: List[float] = []
+        ratio_abs_mean_vals: List[float] = []
+
         for seq, idx, w in valid_entries:
 
             states = torch.from_numpy(np.stack([t.obs for t in seq])).to(self.device, dtype=torch.float32) / 255.0
@@ -822,16 +832,22 @@ class MEMECore:
 
             loss = self.eta * loss_behaviour + (1 - self.eta) * loss_all + policy_loss
             (loss * inv_count).backward()
+            total_loss_vals.append(loss.detach().item())
+            behaviour_loss_vals.append(loss_behaviour.detach().item())
+            aux_loss_vals.append(loss_all.detach().item())
+            policy_loss_vals.append(policy_loss.detach().item())
+            ratio_abs_mean_vals.append(ratio.abs().mean().detach().item())
 
             with torch.no_grad():
                 td_abs = normalised_td.detach().abs()
                 priority = td_abs.mean().clamp(min=1e-3)
+                td_abs_mean_vals.append(td_abs.mean().item())
                 priority_records.append((idx, priority))
                 unique = torch.unique(policy_idx)
                 for pol in unique.tolist():
                     pol_mask = policy_idx == pol
                     if pol_mask.any():
-                        std = td_abs[pol_mask].std().clamp(min=self.td_norm_eps)
+                        std = td_abs[pol_mask].std(unbiased=False).clamp(min=self.td_norm_eps)
                         tdstd_updates.setdefault(pol, []).append(std)
 
         torch.nn.utils.clip_grad_norm_(self.network.parameters(), 10.0)
@@ -843,6 +859,26 @@ class MEMECore:
                 for pol, std_list in tdstd_updates.items():
                     avg_std = torch.stack(std_list).mean()
                     self.running_td_std[pol] = 0.99 * self.running_td_std[pol] + 0.01 * avg_std
+
+        if total_loss_vals:
+            def mean(values: List[float]) -> float:
+                return float(sum(values) / max(1, len(values)))
+
+            metrics = {
+                "loss/total": mean(total_loss_vals),
+                "loss/behaviour": mean(behaviour_loss_vals),
+                "loss/aux_td": mean(aux_loss_vals),
+                "loss/policy": mean(policy_loss_vals),
+                "stats/td_abs_mean": mean(td_abs_mean_vals),
+                "stats/ratio_abs_mean": mean(ratio_abs_mean_vals),
+                "stats/running_td_std_mean": float(self.running_td_std.mean().item()),
+                "train/epsilon": float(self._epsilon()),
+                "train/learning_rate": float(self.optimizer.param_groups[0]["lr"]),
+                "train/interval": float(self.train_interval),
+                "train/updates": float(self.training_steps),
+                "train/batch_count": float(len(valid_entries)),
+            }
+            self.last_metrics = metrics
 
         for idx, priority in priority_records:
             self.replay.update_priorities([idx], priority.detach().unsqueeze(0))
@@ -860,6 +896,11 @@ class MEMECore:
         state_dict = torch.load(path, map_location=self.device)
         self.network.load_state_dict(state_dict)
         self.ema_network.load_state_dict(state_dict)
+
+    def pop_metrics(self) -> Dict[str, float]:
+        metrics = self.last_metrics
+        self.last_metrics = {}
+        return metrics
 
 
 # -----------------------------------------------------------------------------#
@@ -907,6 +948,9 @@ class Agent:
     def load_model(self, path: str) -> None:
         self.core.load_model(path)
 
+    def get_metrics(self) -> Dict[str, float]:
+        return self.core.pop_metrics()
+
 
 class VectorMEMEAgent(VectorAgent):
     def __init__(
@@ -948,3 +992,6 @@ class VectorMEMEAgent(VectorAgent):
 
     def load_model(self, path: str) -> None:
         self.core.load_model(path)
+
+    def get_metrics(self) -> Dict[str, float]:
+        return self.core.pop_metrics()

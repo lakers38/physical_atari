@@ -234,11 +234,22 @@ def main():
 
             agent.observe(next_obs, rewards, terminations, truncations, infos.get("final_info", []))
             agent.train_step()
+            step_metrics = {}
+            if hasattr(agent, "get_metrics"):
+                try:
+                    step_metrics = agent.get_metrics() or {}
+                except Exception:
+                    step_metrics = {}
 
             episode_rewards += rewards
             observations = next_obs
             global_step += args.num_envs
             progress.update(args.num_envs)
+
+            if run is not None and step_metrics:
+                step_metrics = {k: float(v) for k, v in step_metrics.items()}
+                step_metrics["global_step"] = float(global_step)
+                run.log(step_metrics, step=global_step)
 
             if args.record_video:
                 video_frames.append(next_obs[0].copy())
