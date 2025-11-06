@@ -15,10 +15,10 @@ import math
 import os
 import random
 import warnings
-from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
+import contextlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -233,6 +233,32 @@ class Transition:
     policy_probs: np.ndarray
 
 
+@dataclass
+class EpisodeBatch:
+    obs: np.ndarray
+    actions: np.ndarray
+    reward_ext: np.ndarray
+    reward_int: np.ndarray
+    done: np.ndarray
+    policy_idx: np.ndarray
+    policy_probs: np.ndarray
+
+    @property
+    def length(self) -> int:
+        return int(self.actions.shape[0])
+
+    def slice(self, start: int, end: int) -> "EpisodeBatch":
+        return EpisodeBatch(
+            obs=self.obs[start:end],
+            actions=self.actions[start:end],
+            reward_ext=self.reward_ext[start:end],
+            reward_int=self.reward_int[start:end],
+            done=self.done[start:end],
+            policy_idx=self.policy_idx[start:end],
+            policy_probs=self.policy_probs[start:end],
+        )
+
+
 class PrioritisedSequenceReplay:
     def __init__(
         self,
@@ -253,17 +279,39 @@ class PrioritisedSequenceReplay:
         self.alpha = alpha
         self.beta = beta_start
         self.beta_increment = beta_increment
-        self.storage: List[List[Transition]] = []
+        self.storage: List[EpisodeBatch] = []
         self.priorities: List[float] = []
         self.position = 0
 
+    @property
+    def size(self):
+        return len(self.storage)
+
     def add_episode(self, episode: List[Transition]) -> None:
         priority = max(self.priorities, default=1.0)
+        if not episode:
+            return
+        obs = np.stack([t.obs for t in episode]).astype(np.uint8, copy=False)
+        actions = np.fromiter((t.action for t in episode), dtype=np.int64)
+        reward_ext = np.fromiter((t.reward_ext for t in episode), dtype=np.float32)
+        reward_int = np.fromiter((t.reward_int for t in episode), dtype=np.float32)
+        done = np.fromiter((t.done for t in episode), dtype=np.bool_)
+        policy_idx = np.fromiter((t.policy_idx for t in episode), dtype=np.int64)
+        policy_probs = np.stack([t.policy_probs for t in episode]).astype(np.float32, copy=False)
+        packaged = EpisodeBatch(
+            obs=obs,
+            actions=actions,
+            reward_ext=reward_ext,
+            reward_int=reward_int,
+            done=done,
+            policy_idx=policy_idx,
+            policy_probs=policy_probs,
+        )
         if len(self.storage) < self.capacity:
-            self.storage.append(episode)
+            self.storage.append(packaged)
             self.priorities.append(priority)
         else:
-            self.storage[self.position] = episode
+            self.storage[self.position] = packaged
             self.priorities[self.position] = priority
             self.position = (self.position + 1) % self.capacity
 
@@ -280,11 +328,12 @@ class PrioritisedSequenceReplay:
         sequences = []
         for idx in indices:
             episode = self.storage[idx]
-            if len(episode) <= self.seq_len + self.burn_in:
+            total_len = self.seq_len + self.burn_in
+            if episode.length <= total_len:
                 sequences.append(episode)
             else:
-                start = random.randint(0, len(episode) - (self.seq_len + self.burn_in))
-                sequences.append(episode[start : start + self.seq_len + self.burn_in])
+                start = random.randint(0, episode.length - total_len)
+                sequences.append(episode.slice(start, start + total_len))
         return sequences, indices, torch.tensor(weights, dtype=torch.float32)
 
     def update_priorities(self, indices: Iterable[int], priorities: torch.Tensor) -> None:
@@ -432,6 +481,8 @@ class MEMECore:
         data_dir: Optional[str] = None,
         load_file: Optional[str] = None,
         gpu: int = 0,
+        train_micro_batch: Optional[int] = None,
+        use_amp: Optional[bool] = None,
     ):
         self.num_envs = num_envs
         self.num_actions = num_actions
@@ -460,6 +511,7 @@ class MEMECore:
         self.train_interval = max(1, int(train_interval))
         self._train_call_count = 0
         self.last_metrics: Dict[str, float] = {}
+        self.train_micro_batch = train_micro_batch
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -524,6 +576,10 @@ class MEMECore:
         self.frame_count = 0
         self.training_steps = 0
         self.data_dir = data_dir or os.getcwd()
+        self.use_amp = bool(use_amp) if use_amp is not None else self.device.type == "cuda"
+        if self.use_amp and self.device.type != "cuda":
+            self.use_amp = False
+        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
         if load_file is not None and os.path.exists(load_file):
             self.load_model(load_file)
@@ -671,38 +727,48 @@ class MEMECore:
         dones: torch.Tensor,
         policy_probs: torch.Tensor,
     ) -> torch.Tensor:
-        T = q_online.size(0)
-        num_policies = q_online.size(1)
-        running = torch.zeros(num_policies, device=self.device)
+        batched = q_online.dim() == 4
+        if not batched:
+            q_online = q_online.unsqueeze(0)
+            rewards_ext = rewards_ext.unsqueeze(0)
+            rewards_int = rewards_int.unsqueeze(0)
+            dones = dones.unsqueeze(0)
+            policy_probs = policy_probs.unsqueeze(0)
+
+        B, T, num_policies, _ = q_online.shape
+        running = torch.zeros(B, num_policies, device=self.device, dtype=q_online.dtype)
         slices: List[torch.Tensor] = []
+        betas = self.policy_betas.view(1, num_policies)
+        gammas = self.policy_gammas.view(1, num_policies)
 
         for t in reversed(range(T)):
-            reward = rewards_ext[t] + self.policy_betas * rewards_int[t]
-            done = dones[t]
-            probs = policy_probs[t]
+            reward = rewards_ext[:, t].unsqueeze(-1) + betas * rewards_int[:, t].unsqueeze(-1)
+            done = dones[:, t].unsqueeze(-1).expand(-1, num_policies)
+            probs = policy_probs[:, t]  # [B, num_actions]
 
-            q_t = q_online[t]  # [num_policies, num_actions]
-            greedy_q, greedy_idx = q_t.max(dim=-1, keepdim=True)  # [num_policies, 1]
+            q_t = q_online[:, t]  # [B, P, A]
+            greedy_q, greedy_idx = q_t.max(dim=-1, keepdim=True)  # [B, P, 1]
             tolerance = greedy_q - self.tolerance_kappa * greedy_q.abs()
-            q_taken = q_t[torch.arange(num_policies), greedy_idx.squeeze(-1)]
+            q_taken = torch.gather(q_t, dim=-1, index=greedy_idx).squeeze(-1)  # [B, P]
             mask = q_taken >= tolerance.squeeze(-1)
+            mask_f = mask.float()
 
-            expectation = torch.sum(probs * q_t, dim=-1)
+            expectation = torch.sum(probs.unsqueeze(1) * q_t, dim=-1)  # [B, P]
             boot = (
                 (1 - done)
-                * self.policy_gammas
-                * (
-                    mask.float() * ((1 - self.lambda_val) * expectation + self.lambda_val * running)
-                    + (1 - mask.float()) * expectation
-                )
+                * gammas
+                * (mask_f * ((1 - self.lambda_val) * expectation + self.lambda_val * running) + (1 - mask_f) * expectation)
             )
             running = (reward + boot).detach().clamp_(-1e3, 1e3)
-            slices.append(running.unsqueeze(0))
+            slices.append(running.unsqueeze(1))
 
         if slices:
-            result = torch.cat(list(reversed(slices)), dim=0)
-            return torch.nan_to_num(result, nan=0.0, posinf=1e6, neginf=-1e6)
-        return torch.zeros(T, num_policies, device=self.device)
+            result = torch.cat(list(reversed(slices)), dim=1)
+            result = torch.nan_to_num(result, nan=0.0, posinf=1e6, neginf=-1e6)
+        else:
+            result = torch.zeros(B, T, num_policies, device=self.device, dtype=q_online.dtype)
+
+        return result.squeeze(0) if not batched else result
 
     def _trust_region(
         self,
@@ -742,117 +808,176 @@ class MEMECore:
         if not sequences:
             return
 
-        priority_records: List[Tuple[int, torch.Tensor]] = []
-        tdstd_updates: Dict[int, List[torch.Tensor]] = {}
+        total_len = self.burn_in + self.seq_len
+        invalid_records: List[Tuple[int, torch.Tensor]] = []
+        valid_entries: List[Tuple[EpisodeBatch, int, torch.Tensor]] = []
         device_weights = weights.to(self.device)
 
-        valid_entries: List[Tuple[List[Transition], int, torch.Tensor]] = []
         for seq, idx, w in zip(sequences, indices, device_weights):
-            if len(seq) <= self.burn_in + 1:
-                priority_records.append((idx, torch.tensor(1.0, device=self.device)))
+            if seq.length < total_len:
+                invalid_records.append((idx, torch.tensor(1.0, device=self.device)))
                 continue
             valid_entries.append((seq, idx, w))
 
-        valid_count = len(valid_entries)
-        if valid_count == 0:
-            for idx, priority in priority_records:
-                self.replay.update_priorities([idx], priority.detach().unsqueeze(0))
+        if not valid_entries:
+            for idx, priority in invalid_records:
+                self.replay.update_priorities([idx], priority.detach().unsqueeze(0).cpu())
             return
 
-        inv_count = 1.0 / float(valid_count)
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
         self.network.reset_noise()
-        total_loss_vals: List[float] = []
-        behaviour_loss_vals: List[float] = []
-        aux_loss_vals: List[float] = []
-        policy_loss_vals: List[float] = []
-        td_abs_mean_vals: List[float] = []
-        ratio_abs_mean_vals: List[float] = []
 
-        for seq, idx, w in valid_entries:
+        B = len(valid_entries)
+        obs = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.obs) for seq, _, _ in valid_entries])
+        )
+        actions = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.actions) for seq, _, _ in valid_entries])
+        )
+        rew_ext = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.reward_ext) for seq, _, _ in valid_entries]).astype(np.float32, copy=False)
+        )
+        rew_int = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.reward_int) for seq, _, _ in valid_entries]).astype(np.float32, copy=False)
+        )
+        dones = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.done).astype(np.float32) for seq, _, _ in valid_entries])
+        )
+        p_idx = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.policy_idx) for seq, _, _ in valid_entries])
+        )
+        p_probs = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.policy_probs) for seq, _, _ in valid_entries]).astype(np.float32, copy=False)
+        )
+        sample_weights = torch.stack([w for _, _, w in valid_entries]).to(self.device).view(B, 1)
+        replay_indices = [int(idx) for _, idx, _ in valid_entries]
 
-            states = torch.from_numpy(np.stack([t.obs for t in seq])).to(self.device, dtype=torch.float32) / 255.0
-            states = states.unsqueeze(0)
+        micro = self.train_micro_batch or B
+        micro = max(1, min(micro, B))
 
-            ext, intr, logits, hidden = self.network(states[:, : self.burn_in])
-            ext, intr, logits, _ = self.network(states[:, self.burn_in :], hidden)
-            ext = ext.squeeze(0)
-            intr = intr.squeeze(0)
-            logits = logits.squeeze(0)
-            q_online = ext + self.policy_betas.view(1, -1, 1) * intr
+        tdstd_updates: Dict[int, List[torch.Tensor]] = {}
+        priority_indices: List[int] = []
+        priority_values: List[torch.Tensor] = []
 
-            learn = seq[self.burn_in :]
-            actions = torch.tensor([t.action for t in learn], device=self.device, dtype=torch.long)
-            rewards_ext = torch.tensor([t.reward_ext for t in learn], device=self.device, dtype=torch.float32)
-            rewards_int = torch.tensor([t.reward_int for t in learn], device=self.device, dtype=torch.float32)
-            dones = torch.tensor([t.done for t in learn], device=self.device, dtype=torch.float32)
-            policy_idx = torch.tensor([t.policy_idx for t in learn], device=self.device, dtype=torch.long)
-            policy_probs_np = np.stack([t.policy_probs for t in learn], dtype=np.float32)
-            policy_probs = torch.from_numpy(policy_probs_np).to(self.device)
+        loss_total_sum = 0.0
+        loss_behaviour_sum = 0.0
+        loss_aux_sum = 0.0
+        loss_policy_sum = 0.0
+        td_abs_sum = 0.0
+        ratio_abs_sum = 0.0
+        total_samples = 0
 
-            T = actions.size(0)
-            returns = self._soft_watkins_returns(q_online, rewards_ext, rewards_int, dones, policy_probs)
-            returns = torch.nan_to_num(returns, nan=0.0, posinf=1e6, neginf=-1e6)
-            q_selected = q_online[torch.arange(T), policy_idx, actions]
-            targets = returns[torch.arange(T), policy_idx]
-            sigma = self.running_td_std[policy_idx]
-            sigma = torch.nan_to_num(sigma, nan=self.td_norm_eps, posinf=1.0, neginf=1.0).clamp_(min=self.td_norm_eps, max=1e3)
+        for start in range(0, B, micro):
+            end = min(start + micro, B)
+            chunk_size = end - start
+            total_samples += chunk_size
+            weight = chunk_size / float(B)
 
-            mask, normalised_td = self._trust_region(q_selected, q_selected.detach(), targets, sigma, w)
-            if not torch.isfinite(normalised_td).all():
-                print("⚠️ NaN in normalised_td", normalised_td.min().item(), normalised_td.max().item())
-            loss_behaviour = (mask.float() * (normalised_td**2)).mean()
+            obs_mb = obs[start:end].to(self.device, dtype=torch.float32, non_blocking=True) / 255.0
+            actions_mb = actions[start:end].to(self.device, dtype=torch.long, non_blocking=True)
+            rew_ext_mb = rew_ext[start:end].to(self.device, dtype=torch.float32, non_blocking=True)
+            rew_int_mb = rew_int[start:end].to(self.device, dtype=torch.float32, non_blocking=True)
+            dones_mb = dones[start:end].to(self.device, dtype=torch.float32, non_blocking=True)
+            p_idx_mb = p_idx[start:end].to(self.device, dtype=torch.long, non_blocking=True)
+            p_probs_mb = p_probs[start:end].to(self.device, dtype=torch.float32, non_blocking=True)
+            sample_w_mb = sample_weights[start:end]
 
-            actions_expanded = actions.view(T, 1, 1).expand(-1, self.num_policies, 1)
-            q_taken_all = q_online.gather(dim=2, index=actions_expanded).squeeze(-1)
+            if self.use_amp:
+                if hasattr(torch, "amp"):
+                    autocast_ctx = torch.amp.autocast("cuda")
+                else:
+                    autocast_ctx = torch.cuda.amp.autocast()
+            else:
+                autocast_ctx = contextlib.nullcontext()
+            with autocast_ctx:
+                ext, intr, logits, _ = self.network(obs_mb)
+                ext, intr, logits = [x[:, self.burn_in :] for x in (ext, intr, logits)]
 
-            # --- Stable TD ratio computation ---
-            returns = torch.nan_to_num(returns, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(-1e3, 1e3)
-            q_taken_all = torch.nan_to_num(q_taken_all, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(-1e3, 1e3)
+                q_online = ext + self.policy_betas.view(1, 1, -1, 1) * intr
 
-            all_td = returns - q_taken_all
-            all_td = torch.nan_to_num(all_td, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(-1e3, 1e3)
+                returns = self._soft_watkins_returns(
+                    q_online,
+                    rew_ext_mb[:, self.burn_in :],
+                    rew_int_mb[:, self.burn_in :],
+                    dones_mb[:, self.burn_in :],
+                    p_probs_mb[:, self.burn_in :],
+                )
+                returns = torch.nan_to_num(returns, nan=0.0, posinf=1e6, neginf=-1e6).clamp_(-1e3, 1e3)
 
-            all_sigma = (
-                torch.nan_to_num(self.running_td_std, nan=self.td_norm_eps, posinf=1.0, neginf=1.0)
-                .clamp(min=self.td_norm_eps, max=1e3)
-                .unsqueeze(0)
-            )
+                act = actions_mb[:, self.burn_in :].unsqueeze(-1).unsqueeze(-1).expand(-1, -1, self.num_policies, 1)
+                q_taken_all = q_online.gather(3, act).squeeze(3)
 
-            ratio = all_td / all_sigma
-            ratio = torch.nan_to_num(ratio, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(-1e3, 1e3)
-            loss_all = ratio.square().mean()
+                idx_mb = p_idx_mb[:, self.burn_in :].unsqueeze(-1)
+                q_selected = q_taken_all.gather(2, idx_mb).squeeze(2)
+                targets = returns.gather(2, idx_mb).squeeze(2)
 
-            teacher = policy_probs
-            log_probs = F.log_softmax(logits, dim=-1)
-            teacher_expanded = teacher.unsqueeze(1).expand(-1, log_probs.size(1), -1)
-            kl = torch.sum(teacher_expanded * (torch.log(teacher_expanded + 1e-8) - log_probs), dim=-1)
-            kl_mask = (kl <= self.policy_kl_clip).float()
-            policy_loss = -(kl_mask * torch.sum(teacher_expanded * log_probs, dim=-1)).mean()
+                sigma = torch.clamp(
+                    torch.nan_to_num(self.running_td_std[p_idx_mb[:, self.burn_in :]], nan=self.td_norm_eps),
+                    min=self.td_norm_eps,
+                    max=1e3,
+                )
 
-            loss = self.eta * loss_behaviour + (1 - self.eta) * loss_all + policy_loss
-            (loss * inv_count).backward()
-            total_loss_vals.append(loss.detach().item())
-            behaviour_loss_vals.append(loss_behaviour.detach().item())
-            aux_loss_vals.append(loss_all.detach().item())
-            policy_loss_vals.append(policy_loss.detach().item())
-            ratio_abs_mean_vals.append(ratio.abs().mean().detach().item())
+                mask, td = self._trust_region(q_selected, q_selected.detach(), targets, sigma, sample_w_mb)
+                loss_behaviour = (mask.float() * (td**2)).mean()
+
+                sigma_all = torch.clamp(
+                    torch.nan_to_num(self.running_td_std, nan=self.td_norm_eps), min=self.td_norm_eps, max=1e3
+                ).view(1, 1, -1)
+                all_td = torch.nan_to_num((returns - q_taken_all) / sigma_all, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(
+                    -1e3, 1e3
+                )
+                loss_aux = all_td.square().mean()
+
+                teacher = p_probs_mb[:, self.burn_in :]
+                log_probs = F.log_softmax(logits, dim=-1)
+                teacher_expanded = teacher.unsqueeze(2)
+                kl = torch.sum(teacher_expanded * (torch.log(teacher_expanded + 1e-8) - log_probs), dim=-1)
+                kl_mask = (kl <= self.policy_kl_clip).float()
+                loss_policy = -(kl_mask * (teacher_expanded * log_probs).sum(-1)).mean()
+
+                loss = self.eta * loss_behaviour + (1 - self.eta) * loss_aux + loss_policy
+
+            if self.use_amp:
+                self.grad_scaler.scale(loss * weight).backward()
+            else:
+                (loss * weight).backward()
+
+            loss_total_sum += loss.detach().item() * chunk_size
+            loss_behaviour_sum += loss_behaviour.detach().item() * chunk_size
+            loss_aux_sum += loss_aux.detach().item() * chunk_size
+            loss_policy_sum += loss_policy.detach().item() * chunk_size
+
+            td_fp32 = td.detach().float()
+            all_td_fp32 = all_td.detach().float()
+
+            td_abs_chunk = td_fp32.abs().mean(dim=1).clamp_min(1e-3).cpu()
+            priority_indices.extend(replay_indices[start:end])
+            priority_values.append(td_abs_chunk)
+
+            td_abs_sum += td_abs_chunk.mean().item() * chunk_size
+            ratio_abs_sum += all_td_fp32.abs().mean().item() * chunk_size
 
             with torch.no_grad():
-                td_abs = normalised_td.detach().abs()
-                priority = td_abs.mean().clamp(min=1e-3)
-                td_abs_mean_vals.append(td_abs.mean().item())
-                priority_records.append((idx, priority))
-                unique = torch.unique(policy_idx)
-                for pol in unique.tolist():
-                    pol_mask = policy_idx == pol
+                p_idx_slice = p_idx_mb[:, self.burn_in :]
+                for pol in torch.unique(p_idx_slice).tolist():
+                    pol_mask = p_idx_slice == pol
                     if pol_mask.any():
-                        std = td_abs[pol_mask].std(unbiased=False).clamp(min=self.td_norm_eps)
-                        tdstd_updates.setdefault(pol, []).append(std)
+                        std = td_fp32[pol_mask].std(unbiased=False).clamp(min=self.td_norm_eps)
+                        tdstd_updates.setdefault(int(pol), []).append(std)
 
+        if self.use_amp:
+            self.grad_scaler.unscale_(self.optimizer)
         torch.nn.utils.clip_grad_norm_(self.network.parameters(), 10.0)
-        self.optimizer.step()
+        if self.use_amp:
+            self.grad_scaler.step(self.optimizer)
+            self.grad_scaler.update()
+        else:
+            self.optimizer.step()
         self._ema_update()
+
+        if priority_values:
+            priority_tensor = torch.cat(priority_values, dim=0)
+            self.replay.update_priorities(priority_indices, priority_tensor.cpu())
 
         if tdstd_updates:
             with torch.no_grad():
@@ -860,28 +985,21 @@ class MEMECore:
                     avg_std = torch.stack(std_list).mean()
                     self.running_td_std[pol] = 0.99 * self.running_td_std[pol] + 0.01 * avg_std
 
-        if total_loss_vals:
-            def mean(values: List[float]) -> float:
-                return float(sum(values) / max(1, len(values)))
-
-            metrics = {
-                "loss/total": mean(total_loss_vals),
-                "loss/behaviour": mean(behaviour_loss_vals),
-                "loss/aux_td": mean(aux_loss_vals),
-                "loss/policy": mean(policy_loss_vals),
-                "stats/td_abs_mean": mean(td_abs_mean_vals),
-                "stats/ratio_abs_mean": mean(ratio_abs_mean_vals),
-                "stats/running_td_std_mean": float(self.running_td_std.mean().item()),
-                "train/epsilon": float(self._epsilon()),
-                "train/learning_rate": float(self.optimizer.param_groups[0]["lr"]),
-                "train/interval": float(self.train_interval),
-                "train/updates": float(self.training_steps),
-                "train/batch_count": float(len(valid_entries)),
-            }
-            self.last_metrics = metrics
-
-        for idx, priority in priority_records:
-            self.replay.update_priorities([idx], priority.detach().unsqueeze(0))
+        denom = float(total_samples)
+        self.last_metrics = {
+            "loss/total": float(loss_total_sum / denom),
+            "loss/behaviour": float(loss_behaviour_sum / denom),
+            "loss/aux_td": float(loss_aux_sum / denom),
+            "loss/policy": float(loss_policy_sum / denom),
+            "stats/td_abs_mean": float(td_abs_sum / denom),
+            "stats/ratio_abs_mean": float(ratio_abs_sum / denom),
+            "stats/running_td_std_mean": float(self.running_td_std.mean().item()),
+            "train/epsilon": float(self._epsilon()),
+            "train/learning_rate": float(self.optimizer.param_groups[0]["lr"]),
+            "train/updates": float(self.training_steps),
+            "train/batch_count": float(B),
+            "train/micro_batch": float(micro),
+        }
 
         self.training_steps += 1
 
