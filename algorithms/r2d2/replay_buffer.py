@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from priority_tree import PriorityTree
-import config
+from .priority_tree import PriorityTree
+from . import config
 
 
 @dataclass

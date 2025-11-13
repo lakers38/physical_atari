@@ -1,0 +1,29 @@
+{
+    "model_name": "Elgato Facecam MK.2",
+    "camera_config": {
+        "width": 640,
+        "height": 480,
+        "fps": 60,
+        "buffer_size": 4,
+        "codec": "YUYV",
+        "controls": {
+            "exposure_dynamic_framerate": 0,
+            "focus_automatic_continuous": 0,
+            "focus_absolute": 300,
+            "auto_exposure": 1,
+            "exposure_time_absolute": 20,
+            "backlight_compensation": 0,
+            "white_balance_automatic": 0,
+            "white_balance_temperature": 7500,
+            "brightness": 128,
+            "contrast": 84,
+            "gain": 10,
+            "saturation": 84,
+            "power_line_frequency": 2,
+            "sharpness": 128,
+            "pan_absolute": 0,
+            "tilt_absolute": 0,
+            "zoom_absolute": 100
+        }
+    }
+}

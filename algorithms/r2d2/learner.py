@@ -8,9 +8,9 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
-from model import Network
-from actor import calculate_mixed_td_errors
-import config
+from .model import Network
+from .actor import calculate_mixed_td_errors
+from . import config
 
 
 class Learner:

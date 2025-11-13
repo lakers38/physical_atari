@@ -7,7 +7,7 @@ import ale_py
 import numpy as np
 import cv2
 from collections import deque
-import config
+from . import config
 
 # Import latency model for hardware latency simulation
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
