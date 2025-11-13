@@ -5,6 +5,7 @@ import importlib
 import os
 import time
 from typing import Any, Dict, Iterable, Tuple
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -173,6 +174,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--video_dir", type=str, default=os.path.join(os.getcwd(), "videos", "sim_latency_vec"))
     parser.add_argument("--video_every", type=int, default=10, help="Record every Nth env-0 episode")
     parser.add_argument("--video_fps", type=int, default=60)
+    parser.add_argument("--reward_smoothing", type=int, default=100, help="Window (episodes) for smoothed reward logging (0=disable)")
+    parser.add_argument("--resume_dir", type=str, default=None, help="Existing run directory to continue training in")
+    parser.add_argument("--start_step", type=int, default=0, help="Initial global step when resuming training")
     return parser
 
 
@@ -181,6 +185,17 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(args.results_dir, exist_ok=True)
+    if args.resume_dir:
+        run_results_dir = args.resume_dir
+        os.makedirs(run_results_dir, exist_ok=True)
+    else:
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        run_dir_name = f"{args.rom}_{timestamp}"
+        if args.wandb_run_name:
+            safe_name = args.wandb_run_name.replace(" ", "_")
+            run_dir_name = f"{safe_name}_{timestamp}"
+        run_results_dir = os.path.join(args.results_dir, run_dir_name)
+        os.makedirs(run_results_dir, exist_ok=True)
 
     venv = build_env(args)
     agent_cls = load_agent(args.agent)
@@ -190,7 +205,7 @@ def main():
         num_envs=args.num_envs,
         seed=args.seed,
         num_actions=action_space.n,
-        results_dir=args.results_dir,
+        results_dir=run_results_dir,
         total_frames=args.total_frames,
         **agent_kwargs,
     )
@@ -199,6 +214,7 @@ def main():
 
     run_cfg = vars(args).copy()
     run_cfg["agent_kwargs"] = agent_kwargs
+    run_cfg["run_results_dir"] = run_results_dir
     run_cfg.pop("agent_arg", None)
 
     run = None
@@ -214,110 +230,169 @@ def main():
     observations, _ = venv.reset()
     episode_rewards = np.zeros(args.num_envs, dtype=np.float32)
     episode_counts = np.zeros(args.num_envs, dtype=np.int64)
-    global_step = 0
+    global_step = args.start_step
     start_time = time.time()
+    reward_window = deque(maxlen=args.reward_smoothing) if args.reward_smoothing > 0 else None
 
     if args.record_video:
-        os.makedirs(args.video_dir, exist_ok=True)
-        video_frames: list[np.ndarray] = []
+        video_dir = os.path.join(run_results_dir, os.path.relpath(args.video_dir, args.results_dir))
+        os.makedirs(video_dir, exist_ok=True)
         next_record_episode = 1
+        video_writer = None
+        current_video_path = None
     else:
-        video_frames = []
+        video_dir = None
         next_record_episode = None
+        video_writer = None
+        current_video_path = None
 
-    with tqdm(total=args.total_frames, desc="Training", unit="frame", dynamic_ncols=True) as progress:
-        while global_step < args.total_frames:
-            if args.record_video:
-                video_frames.append(observations[0].copy())
-            actions = agent.act(observations)
-            next_obs, rewards, terminations, truncations, infos = venv.step(actions)
-
-            agent.observe(next_obs, rewards, terminations, truncations, infos.get("final_info", []))
-            agent.train_step()
-            step_metrics = {}
-            if hasattr(agent, "get_metrics"):
-                try:
-                    step_metrics = agent.get_metrics() or {}
-                except Exception:
-                    step_metrics = {}
-
-            episode_rewards += rewards
-            observations = next_obs
-            global_step += args.num_envs
-            progress.update(args.num_envs)
-
-            if run is not None and step_metrics:
-                step_metrics = {k: float(v) for k, v in step_metrics.items()}
-                step_metrics["global_step"] = float(global_step)
-                run.log(step_metrics, step=global_step)
-
-            if args.record_video:
-                video_frames.append(next_obs[0].copy())
-
-            for idx, final_info in enumerate(infos.get("final_info", [])):
-                if final_info is None:
-                    continue
-                episode_counts[idx] += 1
-                score = episode_rewards[idx]
-                elapsed = time.time() - start_time
-                sps = int(global_step / elapsed) if elapsed > 0 else 0
-                progress.set_postfix(sps=sps)
-                print(f"[env {idx}] episode {episode_counts[idx]} score {score:.1f} step {global_step} SPS {sps}")
-                if run is not None:
-                    run.log({"episode_reward": score, "global_step": global_step, "sps": sps}, step=global_step)
-                if args.record_video and idx == 0:
-                    if episode_counts[idx] == next_record_episode:
-                        video_path = os.path.join(
-                            args.video_dir,
-                            f"{args.rom}_episode_{episode_counts[idx]:04d}.mp4",
+    try:
+        with tqdm(
+            total=args.total_frames,
+            desc="Training",
+            unit="frame",
+            dynamic_ncols=True,
+            initial=global_step,
+        ) as progress:
+            while global_step < args.total_frames:
+                if args.record_video:
+                    if (
+                        next_record_episode is not None
+                        and video_writer is None
+                        and episode_counts[0] + 1 == next_record_episode
+                        and video_dir is not None
+                    ):
+                        current_video_path = os.path.join(
+                            video_dir,
+                            f"{args.rom}_episode_{next_record_episode:04d}.mp4",
                         )
-                        imageio.mimsave(video_path, video_frames, fps=args.video_fps)
+                        video_writer = imageio.get_writer(current_video_path, fps=args.video_fps)
+                    if video_writer is not None:
+                        video_writer.append_data(observations[0].copy())
+                actions = agent.act(observations)
+                next_obs, rewards, terminations, truncations, infos = venv.step(actions)
+
+                agent.observe(next_obs, rewards, terminations, truncations, infos.get("final_info", []))
+                agent.train_step()
+                step_metrics = {}
+                if hasattr(agent, "get_metrics"):
+                    try:
+                        step_metrics = agent.get_metrics() or {}
+                    except Exception:
+                        step_metrics = {}
+
+                episode_rewards += rewards
+                observations = next_obs
+                global_step += args.num_envs
+                progress.update(args.num_envs)
+
+                if run is not None and step_metrics:
+                    step_metrics = {k: float(v) for k, v in step_metrics.items()}
+                    step_metrics["global_step"] = float(global_step)
+                    run.log(step_metrics, step=global_step)
+
+
+                for idx, final_info in enumerate(infos.get("final_info", [])):
+                    if final_info is None:
+                        continue
+                    episode_counts[idx] += 1
+                    score = episode_rewards[idx]
+                    elapsed = time.time() - start_time
+                    sps = int(global_step / elapsed) if elapsed > 0 else 0
+                    progress.set_postfix(sps=sps)
+                    if reward_window is not None:
+                        reward_window.append(score)
+                        smooth_reward = float(np.mean(reward_window))
+                    else:
+                        smooth_reward = None
+                    print(f"[env {idx}] episode {episode_counts[idx]} score {score:.1f} step {global_step} SPS {sps}")
+                    if run is not None:
+                        log_payload = {"episode_reward": score, "global_step": global_step, "sps": sps}
+                        if smooth_reward is not None:
+                            log_payload["episode_reward_smooth"] = smooth_reward
+                        run.log(log_payload, step=global_step)
+                    if (
+                        args.record_video
+                        and idx == 0
+                        and video_writer is not None
+                        and current_video_path is not None
+                    ):
+                        video_writer.close()
                         if run is not None and wandb is not None:
-                            run.log({"episode_video": wandb.Video(video_path, fps=args.video_fps)}, step=global_step)
-                        next_record_episode += args.video_every
-                    video_frames = []
-                episode_rewards[idx] = 0.0
+                            run.log({"episode_video": wandb.Video(current_video_path, fps=args.video_fps)}, step=global_step)
+                        video_writer = None
+                        current_video_path = None
+                        if next_record_episode is not None:
+                            next_record_episode += args.video_every
+                    episode_rewards[idx] = 0.0
 
-            if args.log_interval and global_step % args.log_interval < args.num_envs:
-                elapsed = time.time() - start_time
-                sps = int(global_step / elapsed) if elapsed > 0 else 0
-                progress.set_postfix(sps=sps)
-                if run is not None:
-                    metrics = {"global_step": global_step, "sps": sps}
-                    core = getattr(agent, "core", None)
-                    if core is not None:
-                        metrics["train/loss"] = getattr(core, "last_loss", 0.0)
-                        if getattr(core, "loss_ema", None) is not None:
-                            metrics["train/loss_ema"] = core.loss_ema
-                        metrics["train/avg_q"] = getattr(core, "last_avg_q", 0.0)
-                        metrics["train/max_q"] = getattr(core, "last_max_q", 0.0)
-                        metrics["train/epsilon"] = getattr(core, "epsilon", 0.0)
-                        metrics["train/td_error"] = getattr(core, "last_td_error", 0.0)
-                        metrics["train/grad_norm"] = getattr(core, "last_grad_norm", 0.0)
-                        metrics["train/beta"] = getattr(core.replay, "beta", 0.0)
-                        if getattr(core.replay, "max_priority", None) is not None:
-                            metrics["replay/max_priority"] = core.replay.max_priority
-                        metrics["replay/fraction_filled"] = core.replay.size / float(core.replay.capacity)
-                        if hasattr(core, "optimizer"):
-                            metrics["train/lr"] = core.optimizer.param_groups[0]["lr"]
-                        # Average sigma for noisy layers helps track exploration decay.
-                        sigmas = []
-                        for module in core.network.modules():
-                            if hasattr(module, "weight_sigma"):
-                                sigmas.append(module.weight_sigma.detach().mean().item())
-                        if sigmas:
-                            metrics["train/noisy_sigma"] = float(np.mean(sigmas))
-                    run.log(metrics, step=global_step)
+                if args.log_interval and global_step % args.log_interval < args.num_envs:
+                    elapsed = time.time() - start_time
+                    sps = int(global_step / elapsed) if elapsed > 0 else 0
+                    progress.set_postfix(sps=sps)
+                    if run is not None:
+                        metrics = {"global_step": global_step, "sps": sps}
+                        core = getattr(agent, "core", None)
+                        if core is not None:
+                            metrics["train/loss"] = getattr(core, "last_loss", 0.0)
+                            if getattr(core, "loss_ema", None) is not None:
+                                metrics["train/loss_ema"] = core.loss_ema
+                            metrics["train/avg_q"] = getattr(core, "last_avg_q", 0.0)
+                            metrics["train/max_q"] = getattr(core, "last_max_q", 0.0)
+                            metrics["train/epsilon"] = getattr(core, "epsilon", 0.0)
+                            metrics["train/td_error"] = getattr(core, "last_td_error", 0.0)
+                            metrics["train/grad_norm"] = getattr(core, "last_grad_norm", 0.0)
+                            metrics["train/beta"] = getattr(core.replay, "beta", 0.0)
+                            if getattr(core.replay, "max_priority", None) is not None:
+                                metrics["replay/max_priority"] = core.replay.max_priority
+                            metrics["replay/fraction_filled"] = core.replay.size / float(core.replay.capacity)
+                            if hasattr(core, "optimizer"):
+                                metrics["train/lr"] = core.optimizer.param_groups[0]["lr"]
+                            sigmas = []
+                            for module in core.network.modules():
+                                if hasattr(module, "weight_sigma"):
+                                    sigmas.append(module.weight_sigma.detach().mean().item())
+                            if sigmas:
+                                metrics["train/noisy_sigma"] = float(np.mean(sigmas))
+                        run.log(metrics, step=global_step)
 
-            if args.checkpoint_interval and global_step % args.checkpoint_interval < args.num_envs:
-                ckpt_path = os.path.join(args.results_dir, f"checkpoint_{global_step}.pt")
-                agent.save_model(ckpt_path)
-                print(f"Saved checkpoint to {ckpt_path}")
+                if args.checkpoint_interval and global_step % args.checkpoint_interval < args.num_envs:
+                    ckpt_name = f"{args.rom}_checkpoint_{global_step}.pt"
+                    ckpt_path = os.path.join(run_results_dir, ckpt_name)
+                    agent.save_model(ckpt_path)
+                    print(f"Saved checkpoint to {ckpt_path}")
 
-    final_path = os.path.join(args.results_dir, args.checkpoint_name)
-    agent.save_model(final_path)
-    if run is not None:
-        run.finish()
+        final_name = f"{args.rom}_{args.checkpoint_name}"
+        final_path = os.path.join(run_results_dir, final_name)
+        agent.save_model(final_path)
+    except Exception as exc:
+        if run is not None:
+            crash_payload = {
+                "train/crash": 1,
+                "train/crash_message": str(exc),
+                "global_step": float(global_step),
+            }
+            run.log(crash_payload, step=global_step if global_step > 0 else None)
+            if hasattr(run, "alert"):
+                try:
+                    alert_level = None
+                    if wandb is not None and hasattr(wandb, "AlertLevel"):
+                        alert_level = wandb.AlertLevel.ERROR
+                    run.alert(
+                        title=f"{args.rom} training crashed",
+                        text=f"{type(exc).__name__}: {exc}",
+                        level=alert_level,
+                    )
+                except Exception:
+                    pass
+        raise
+    finally:
+        if args.record_video and video_writer is not None and current_video_path is not None:
+            video_writer.close()
+            if run is not None and wandb is not None:
+                run.log({"episode_video": wandb.Video(current_video_path, fps=args.video_fps)}, step=global_step)
+        if run is not None:
+            run.finish()
     print("Training complete.")
 
 

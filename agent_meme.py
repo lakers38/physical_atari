@@ -98,6 +98,67 @@ class NFResidualBlock(nn.Module):
         return residual + self.alpha * out
 
 
+class ScaledStdConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, gain=1.0, eps=1e-5):
+        super().__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        self.gain = gain
+        self.eps = eps
+
+    def _scaled_weight(self):
+        fan_in = self.weight[0].numel()
+        mean = self.weight.mean(dim=(1, 2, 3), keepdim=True)
+        var = self.weight.var(dim=(1, 2, 3), unbiased=False, keepdim=True)
+        scale = self.gain / math.sqrt(fan_in)
+        return (self.weight - mean) * scale / torch.sqrt(var + self.eps)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        weight = self._scaled_weight()
+        return F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+
+class SqueezeExcite(nn.Module):
+    def __init__(self, channels: int, reduction: float = 0.5):
+        super().__init__()
+        hidden = max(1, int(channels * reduction))
+        self.fc = nn.Sequential(
+            nn.Linear(channels, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, channels),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        scale = self.fc(x.mean(dim=(2, 3)))
+        return x * scale.unsqueeze(-1).unsqueeze(-1)
+
+
+class NFBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, alpha: float = 0.2, se_ratio: float = 0.5):
+        super().__init__()
+        self.stride = stride
+        self.alpha = alpha
+        self.act = nn.GELU()
+        self.conv1 = ScaledStdConv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
+        self.conv2 = ScaledStdConv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.se = SqueezeExcite(out_channels, se_ratio) if se_ratio else None
+        if stride > 1 or in_channels != out_channels:
+            self.downsample = ScaledStdConv2d(in_channels, out_channels, kernel_size=1, stride=stride)
+        else:
+            self.downsample = None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        out = self.act(x)
+        out = self.conv1(out)
+        out = self.act(out)
+        out = self.conv2(out)
+        if self.se is not None:
+            out = self.se(out)
+        if self.downsample is not None:
+            residual = self.downsample(residual)
+        return residual + self.alpha * out
+
+
 class RunningMeanStd:
     def __init__(self, shape, eps: float = 1e-4):
         self.mean = torch.zeros(shape)
@@ -130,32 +191,66 @@ class RunningMeanStd:
 
 
 class EpisodicMemory:
-    def __init__(self, embedding_dim: int, max_memory: int = 3000, k: int = 10, cluster_distance: float = 0.008):
+    def __init__(
+        self,
+        embedding_dim: int,
+        max_memory: int = 3000,
+        k: int = 10,
+        cluster_distance: float = 0.008,
+        kernel_epsilon: float = 0.0001,
+        pseudo_count_c: float = 0.001,
+        similarity_max: float = 8.0,
+        running_mean_decay: float = 0.99,
+    ):
         self.embedding_dim = embedding_dim
         self.max_memory = max_memory
         self.k = k
         self.cluster_distance = cluster_distance
+        self.kernel_epsilon = kernel_epsilon
+        self.pseudo_count_c = pseudo_count_c
+        self.similarity_max = similarity_max
+        self.running_mean_decay = running_mean_decay
         self.memory: List[np.ndarray] = []
+        self.running_d2 = 1.0
 
     def reset(self) -> None:
         self.memory.clear()
+        self.running_d2 = 1.0
 
     def compute_bonus(self, embedding: np.ndarray) -> float:
+        embedding = embedding.astype(np.float32, copy=False)
         if not self.memory:
-            self.memory.append(embedding)
+            self.memory.append(embedding.copy())
             return 1.0
-        dists = np.linalg.norm(np.asarray(self.memory) - embedding, axis=1)
+
+        memory_array = np.asarray(self.memory, dtype=np.float32)
+        dists = np.sum((memory_array - embedding) ** 2, axis=1)
         k = min(self.k, len(dists))
+        if k <= 0:
+            self.memory.append(embedding.copy())
+            if len(self.memory) > self.max_memory:
+                self.memory.pop(0)
+            return 1.0
 
-        if k == 0:
-            nearest = dists
+        idx = np.argpartition(dists, k - 1)[:k]
+        dk = dists[idx]
+
+        mean_dist = float(np.mean(dk))
+        self.running_d2 = (
+            self.running_mean_decay * self.running_d2 + (1.0 - self.running_mean_decay) * max(mean_dist, 1e-6)
+        )
+        norm = self.running_d2 if self.running_d2 > 1e-6 else 1e-6
+        dn = dk / norm
+        dn = np.maximum(dn - self.cluster_distance, 0.0)
+        kv = self.kernel_epsilon / (dn + self.kernel_epsilon)
+        similarity = math.sqrt(np.sum(kv) + self.pseudo_count_c)
+
+        if similarity > self.similarity_max:
+            bonus = 0.0
         else:
-            nearest = np.partition(dists, k - 1)[:k]
-        mean_dist = float(np.mean(nearest))
-        normed = mean_dist / (self.cluster_distance + 1e-6)
-        bonus = 1.0 / (normed + 1.0)
+            bonus = 1.0 / similarity
 
-        self.memory.append(embedding)
+        self.memory.append(embedding.copy())
         if len(self.memory) > self.max_memory:
             self.memory.pop(0)
         return float(np.clip(bonus, 0.0, 1.0))
@@ -189,8 +284,9 @@ class RNDModule(nn.Module):
         )
         for p in self.target.parameters():
             p.requires_grad = False
-        self.optimizer = torch.optim.Adam(self.predictor.parameters(), lr=1e-4)
+        self.optimizer = torch.optim.Adam(self.predictor.parameters(), lr=6e-4)
         self.running_stats = RunningMeanStd(embedding_dim)
+        self.error_stats = RunningMeanStd(1)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         pred = self.predictor(x)
@@ -200,21 +296,27 @@ class RNDModule(nn.Module):
 
     def update(self, observations: torch.Tensor) -> torch.Tensor:
         pred, target = self(observations)
-        loss = F.mse_loss(pred, target, reduction="mean")
+        diff = pred - target
+        errors = torch.sum(diff**2, dim=1, keepdim=True)
+        loss = errors.mean()
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         with torch.no_grad():
-            diff = pred - target
             self.running_stats.update(diff)
+            self.error_stats.update(errors.detach().cpu())
         return loss.detach()
 
-    def bonus(self, observations: torch.Tensor) -> torch.Tensor:
+    def bonus(self, observations: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         pred, target = self(observations)
         with torch.no_grad():
             diff = pred - target
-            bonus = torch.sum(diff**2, dim=-1)
-            return bonus
+            errors = torch.sum(diff**2, dim=1)
+            self.error_stats.update(errors.unsqueeze(1).detach().cpu())
+            mean = self.error_stats.mean.to(errors.device)
+            std = self.error_stats.var.sqrt().to(errors.device) + 1e-6
+            normalized = (errors - mean) / std
+            return normalized, errors
 
 
 # -----------------------------------------------------------------------------#
@@ -231,6 +333,7 @@ class Transition:
     done: bool
     policy_idx: int
     policy_probs: np.ndarray
+    features: np.ndarray
 
 
 @dataclass
@@ -242,6 +345,7 @@ class EpisodeBatch:
     done: np.ndarray
     policy_idx: np.ndarray
     policy_probs: np.ndarray
+    features: np.ndarray
 
     @property
     def length(self) -> int:
@@ -256,6 +360,7 @@ class EpisodeBatch:
             done=self.done[start:end],
             policy_idx=self.policy_idx[start:end],
             policy_probs=self.policy_probs[start:end],
+            features=self.features[start:end],
         )
 
 
@@ -298,22 +403,29 @@ class PrioritisedSequenceReplay:
         done = np.fromiter((t.done for t in episode), dtype=np.bool_)
         policy_idx = np.fromiter((t.policy_idx for t in episode), dtype=np.int64)
         policy_probs = np.stack([t.policy_probs for t in episode]).astype(np.float32, copy=False)
-        packaged = EpisodeBatch(
-            obs=obs,
-            actions=actions,
-            reward_ext=reward_ext,
-            reward_int=reward_int,
-            done=done,
-            policy_idx=policy_idx,
-            policy_probs=policy_probs,
-        )
-        if len(self.storage) < self.capacity:
-            self.storage.append(packaged)
-            self.priorities.append(priority)
-        else:
-            self.storage[self.position] = packaged
-            self.priorities[self.position] = priority
-            self.position = (self.position + 1) % self.capacity
+        features = np.stack([t.features for t in episode]).astype(np.float32, copy=False)
+
+        total_len = max(1, self.seq_len + self.burn_in)
+        num_steps = actions.shape[0]
+        for start in range(0, num_steps, total_len):
+            end = min(start + total_len, num_steps)
+            chunk = EpisodeBatch(
+                obs=np.ascontiguousarray(obs[start:end]),
+                actions=np.ascontiguousarray(actions[start:end]),
+                reward_ext=np.ascontiguousarray(reward_ext[start:end]),
+                reward_int=np.ascontiguousarray(reward_int[start:end]),
+                done=np.ascontiguousarray(done[start:end]),
+                policy_idx=np.ascontiguousarray(policy_idx[start:end]),
+                policy_probs=np.ascontiguousarray(policy_probs[start:end]),
+                features=np.ascontiguousarray(features[start:end]),
+            )
+            if len(self.storage) < self.capacity:
+                self.storage.append(chunk)
+                self.priorities.append(priority)
+            else:
+                self.storage[self.position] = chunk
+                self.priorities[self.position] = priority
+                self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size: int):
         if not self.storage:
@@ -353,27 +465,67 @@ class MEMENetwork(nn.Module):
         num_actions: int,
         num_policies: int,
         hidden_dim: int = 512,
-        depth: int = 6,
         lstm_hidden: int = 1024,
+        feature_dim: int = 68,
     ):
         super().__init__()
         self.num_actions = num_actions
         self.num_policies = num_policies
+        self.feature_dim = feature_dim
 
         self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=5, stride=2, padding=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
+            ScaledStdConv2d(in_channels, 64, kernel_size=7, stride=4, padding=3),
+            nn.GELU(),
         )
-        self.blocks = nn.ModuleList([NFResidualBlock(128) for _ in range(depth)])
+        config = [
+            (2, 64, 1),
+            (3, 128, 2),
+            (4, 128, 2),
+            (4, 64, 2),
+        ]
+        stages = []
+        in_ch = 64
+        for blocks, channels, stride in config:
+            layer = []
+            for i in range(blocks):
+                layer.append(NFBlock(in_ch, channels, stride if i == 0 else 1))
+                in_ch = channels
+            stages.append(nn.Sequential(*layer))
+        self.stages = nn.ModuleList(stages)
         self.pool = nn.AdaptiveAvgPool2d(1)
-        self.torso = nn.Sequential(nn.Flatten(), nn.Linear(128, hidden_dim), nn.ReLU())
+
+        torso_input = in_ch
+        if feature_dim > 0:
+            self.feature_mlp = nn.Sequential(
+                nn.Linear(feature_dim, 256),
+                nn.GELU(),
+            )
+            torso_input += 256
+        else:
+            self.feature_mlp = None
+
+        self.torso = nn.Sequential(
+            nn.Linear(torso_input, hidden_dim),
+            nn.GELU(),
+        )
         self.lstm = nn.LSTM(hidden_dim, lstm_hidden, batch_first=True)
 
-        self.extrinsic_head = NoisyLinear(lstm_hidden, num_policies * num_actions)
-        self.intrinsic_head = NoisyLinear(lstm_hidden, num_policies * num_actions)
-        self.policy_head = nn.Linear(lstm_hidden, num_policies * num_actions)
+        def build_head(noisy: bool):
+            layers = [
+                nn.Linear(lstm_hidden, 1024),
+                nn.GELU(),
+                nn.Linear(1024, 1024),
+                nn.GELU(),
+            ]
+            if noisy:
+                layers.append(NoisyLinear(1024, num_policies * num_actions))
+            else:
+                layers.append(nn.Linear(1024, num_policies * num_actions))
+            return nn.Sequential(*layers)
+
+        self.extrinsic_head = build_head(noisy=True)
+        self.intrinsic_head = build_head(noisy=True)
+        self.policy_head = build_head(noisy=False)
 
     def reset_noise(self) -> None:
         for module in self.modules():
@@ -383,16 +535,20 @@ class MEMENetwork(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
+        features: Optional[torch.Tensor] = None,
         hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         batch, time = x.shape[:2]
-        x = x.view(batch * time, *x.shape[2:])
-        out = self.stem(x)
-        for block in self.blocks:
-            out = block(out)
-        out = self.pool(out)
+        out = x.view(batch * time, *x.shape[2:])
+        out = self.stem(out)
+        for stage in self.stages:
+            out = stage(out)
+        out = self.pool(out).view(batch, time, -1)
+        if self.feature_mlp is not None and features is not None:
+            feat = features.view(batch * time, -1)
+            feat = self.feature_mlp(feat).view(batch, time, -1)
+            out = torch.cat([out, feat], dim=-1)
         out = self.torso(out)
-        out = out.view(batch, time, -1)
         out, hidden = self.lstm(out, hidden)
         out = out.reshape(batch * time, -1)
         ext = self.extrinsic_head(out).view(batch, time, self.num_policies, self.num_actions)
@@ -437,6 +593,45 @@ class DiscountedUCBBandit:
 
 
 class MEMECore:
+    @staticmethod
+    def _bandit_sigmoid(x: float) -> float:
+        return 1.0 / (1.0 + math.exp(-x))
+
+    @staticmethod
+    def _compute_beta_schedule(num_policies: int, beta_max: float) -> np.ndarray:
+        if num_policies <= 0:
+            return np.zeros(0, dtype=np.float32)
+        if num_policies == 1:
+            return np.array([beta_max], dtype=np.float32)
+        betas = np.zeros(num_policies, dtype=np.float32)
+        betas[-1] = beta_max
+        if num_policies > 2:
+            denom = max(1, num_policies - 2)
+            for i in range(1, num_policies - 1):
+                x = 8.0 * (2 * i - (num_policies - 2)) / denom
+                betas[i] = beta_max * MEMECore._bandit_sigmoid(x)
+        return betas
+
+    @staticmethod
+    def _compute_gamma_schedule(num_policies: int, gamma_min: float, gamma_max: float) -> np.ndarray:
+        if num_policies <= 0:
+            return np.zeros(0, dtype=np.float32)
+        gamma_min = min(gamma_min, gamma_max)
+        epsilon = 1e-9
+        def clamp(x):
+            return max(epsilon, min(1 - epsilon, x))
+        log1_max = math.log(clamp(1.0 - gamma_max))
+        log1_min = math.log(clamp(1.0 - gamma_min))
+        if num_policies == 1:
+            return np.array([gamma_max], dtype=np.float32)
+        gammas = np.zeros(num_policies, dtype=np.float32)
+        for i in range(num_policies):
+            a = (num_policies - 1 - i) / (num_policies - 1)
+            b = i / (num_policies - 1)
+            inside = a * log1_max + b * log1_min
+            gammas[i] = 1.0 - math.exp(inside)
+        return gammas
+
     def __init__(
         self,
         *,
@@ -448,41 +643,45 @@ class MEMECore:
         obs_height: int = 84,
         obs_width: int = 84,
         buffer_capacity: int = 4000,
-        seq_len: int = 80,
-        burn_in: int = 20,
-        batch_size: int = 16,
-        learning_rate: float = 3e-5,
-        adam_eps: float = 1e-5,
+        seq_len: int = 160,
+        burn_in: int = 0,
+        batch_size: int = 64,
+        learning_rate: float = 3e-4,
+        adam_eps: float = 1e-8,
         num_policies: int = 16,
         beta_low: float = 0.1,
-        beta_high: float = 1.5,
-        gamma_low: float = 0.90,
-        gamma_high: float = 0.997,
+        beta_high: float = 0.1,
+        gamma_low: float = 0.97,
+        gamma_high: float = 0.9997,
         eta: float = 0.5,
-        lambda_val: float = 0.9,
-        tolerance_kappa: float = 0.05,
-        train_interval: int = 8,
+        lambda_val: float = 0.95,
+        tolerance_kappa: float = 0.01,
+        train_interval: int = 6,
         epsilon_start: float = 0.4,
         epsilon_end: float = 0.01,
         epsilon_decay: int = 1_000_000,
         trust_alpha: float = 2.0,
         td_norm_eps: float = 0.01,
-        policy_kl_clip: float = 0.2,
+        policy_kl_clip: float = 0.5,
         distill_temperature: float = 0.25,
         priority_alpha: float = 0.6,
         priority_beta: float = 0.4,
         priority_beta_increment: float = 1e-6,
         rnd_embedding: int = 128,
         episodic_embedding: int = 32,
-        meta_discount: float = 0.99,
-        meta_bonus_c: float = 1.5,
-        meta_epsilon: float = 0.05,
+        meta_discount: float = 0.999,
+        meta_bonus_c: float = 1.0,
+        meta_epsilon: float = 0.5,
         ema_decay: float = 0.995,
         data_dir: Optional[str] = None,
         load_file: Optional[str] = None,
         gpu: int = 0,
         train_micro_batch: Optional[int] = None,
         use_amp: Optional[bool] = None,
+        debug_probe_logging: bool = False,
+        use_intrinsic_rewards: bool = True,
+        use_reward_transform: bool = True,
+        use_bandit_schedule: bool = True,
     ):
         self.num_envs = num_envs
         self.num_actions = num_actions
@@ -512,6 +711,18 @@ class MEMECore:
         self._train_call_count = 0
         self.last_metrics: Dict[str, float] = {}
         self.train_micro_batch = train_micro_batch
+        self.use_intrinsic_rewards = use_intrinsic_rewards
+        self.use_reward_transform = use_reward_transform
+        self.use_bandit_schedule = use_bandit_schedule
+        env_flag = os.environ.get("MEME_DEBUG_PROBES", "").lower()
+        env_enabled = env_flag not in ("", "0", "false", "off")
+        self.debug_probe_logging = bool(debug_probe_logging or env_enabled)
+        self._debug_observe_counts = np.zeros(num_envs, dtype=np.int64)
+        self._debug_logged_batch = False
+        self._debug_logged_returns = False
+        self._debug_logged_policy = False
+        self._debug_return_logs = 0
+        self._debug_trust_region_calls = 0
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -524,19 +735,51 @@ class MEMECore:
         else:
             self.device = torch.device('cpu')
 
-        betas = np.geomspace(beta_low, beta_high, num_policies).astype(np.float32)
-        gammas = np.linspace(gamma_low, gamma_high, num_policies).astype(np.float32)
+        if self.use_bandit_schedule:
+            betas = self._compute_beta_schedule(num_policies, beta_high)
+            gammas = self._compute_gamma_schedule(num_policies, gamma_low, gamma_high)
+        else:
+            if beta_low <= 0.0 or beta_high <= 0.0:
+                betas = np.linspace(beta_low, beta_high, num_policies).astype(np.float32)
+            else:
+                betas = np.geomspace(beta_low, beta_high, num_policies).astype(np.float32)
+            gammas = np.linspace(gamma_low, gamma_high, num_policies).astype(np.float32)
         self.policy_betas = torch.tensor(betas, device=self.device)
         self.policy_gammas = torch.tensor(gammas, device=self.device)
         self.num_policies = num_policies
 
-        self.network = MEMENetwork(stack_size, num_actions, num_policies).to(self.device)
-        self.ema_network = MEMENetwork(stack_size, num_actions, num_policies).to(self.device)
+        self.state_stacks = np.zeros((num_envs, stack_size, obs_height, obs_width), dtype=np.uint8)
+        self.last_actions = np.full(num_envs, -1, dtype=np.int64)
+        self.last_policy_indices = np.zeros(num_envs, dtype=np.int64)
+        self.last_policy_dists = np.zeros((num_envs, num_actions), dtype=np.float32)
+        self.lstm_hidden_h = torch.zeros(self.num_envs, 1024, device=self.device)
+        self.lstm_hidden_c = torch.zeros(self.num_envs, 1024, device=self.device)
+        self.episode_buffers: List[List[Transition]] = [[] for _ in range(num_envs)]
+        action_embed_dim = 32
+        self.action_embedding_table = np.zeros((num_actions, action_embed_dim), dtype=np.float32)
+        eye_dim = min(num_actions, action_embed_dim)
+        self.action_embedding_table[:, :eye_dim] = np.eye(num_actions, eye_dim, dtype=np.float32)
+        self.prev_action_ids = np.zeros(num_envs, dtype=np.int64)
+        self.prev_ext_reward = np.zeros(num_envs, dtype=np.float32)
+        self.prev_int_reward = np.zeros(num_envs, dtype=np.float32)
+        self.prev_rnd_component = np.zeros(num_envs, dtype=np.float32)
+        self.prev_epi_component = np.zeros(num_envs, dtype=np.float32)
+        self.prev_ap_embedding = np.zeros((num_envs, 32), dtype=np.float32)
+        self.feature_dim = action_embed_dim + 4 + self.prev_ap_embedding.shape[1]
+        self.last_features = np.zeros((num_envs, self.feature_dim), dtype=np.float32)
+
+        self.network = MEMENetwork(stack_size, num_actions, num_policies, feature_dim=self.feature_dim).to(self.device)
+        self.ema_network = MEMENetwork(stack_size, num_actions, num_policies, feature_dim=self.feature_dim).to(self.device)
         self.ema_network.load_state_dict(self.network.state_dict())
         for p in self.ema_network.parameters():
             p.requires_grad_(False)
 
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, eps=adam_eps)
+        self.optimizer = torch.optim.Adam(
+            self.network.parameters(),
+            lr=learning_rate,
+            eps=adam_eps,
+            weight_decay=0.05,
+        )
 
         self.replay = PrioritisedSequenceReplay(
             capacity=buffer_capacity,
@@ -548,14 +791,6 @@ class MEMECore:
             beta_start=priority_beta,
             beta_increment=priority_beta_increment,
         )
-
-        self.state_stacks = np.zeros((num_envs, stack_size, obs_height, obs_width), dtype=np.uint8)
-        self.last_actions = np.full(num_envs, -1, dtype=np.int64)
-        self.last_policy_indices = np.zeros(num_envs, dtype=np.int64)
-        self.last_policy_dists = np.zeros((num_envs, num_actions), dtype=np.float32)
-        self.lstm_hidden_h = torch.zeros(self.num_envs, 1024, device=self.device)
-        self.lstm_hidden_c = torch.zeros(self.num_envs, 1024, device=self.device)
-        self.episode_buffers: List[List[Transition]] = [[] for _ in range(num_envs)]
 
         self.rnd = RNDModule((stack_size, obs_height, obs_width), embedding_dim=rnd_embedding).to(self.device)
         self.embedding_head = nn.Sequential(
@@ -580,6 +815,7 @@ class MEMECore:
         if self.use_amp and self.device.type != "cuda":
             self.use_amp = False
         self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.last_td_error = 0.0
 
         if load_file is not None and os.path.exists(load_file):
             self.load_model(load_file)
@@ -598,10 +834,30 @@ class MEMECore:
             self.episodic_modules[env].reset()
         self.lstm_hidden_h.zero_()
         self.lstm_hidden_c.zero_()
+        self.prev_action_ids.fill(0)
+        self.prev_ext_reward.fill(0.0)
+        self.prev_int_reward.fill(0.0)
+        self.prev_rnd_component.fill(0.0)
+        self.prev_epi_component.fill(0.0)
+        self.prev_ap_embedding.fill(0.0)
+        self.last_features.fill(0.0)
 
     def _epsilon(self) -> float:
         fraction = min(self.frame_count / float(self.epsilon_decay), 1.0)
         return float(self.epsilon_start + fraction * (self.epsilon_end - self.epsilon_start))
+
+    def _current_feature_array(self) -> np.ndarray:
+        action_feat = self.action_embedding_table[self.prev_action_ids]
+        scalar_feats = np.stack(
+            [
+                self.prev_ext_reward,
+                self.prev_int_reward,
+                self.prev_rnd_component,
+                self.prev_epi_component,
+            ],
+            axis=1,
+        )
+        return np.concatenate([action_feat, scalar_feats, self.prev_ap_embedding], axis=1).astype(np.float32)
 
     def act(self, observations: np.ndarray) -> np.ndarray:
         processed = preprocess_batch(observations, self.obs_height, self.obs_width)
@@ -611,6 +867,9 @@ class MEMECore:
         epsilon = self._epsilon()
         obs_tensor = torch.from_numpy(self.state_stacks).to(self.device, dtype=torch.float32) / 255.0
         obs_tensor = obs_tensor.unsqueeze(1)
+        feature_np = self._current_feature_array()
+        self.last_features = feature_np
+        feature_tensor = torch.from_numpy(feature_np).to(self.device, dtype=torch.float32).unsqueeze(1)
 
         hidden = (
             self.lstm_hidden_h.unsqueeze(0).contiguous(),
@@ -619,7 +878,7 @@ class MEMECore:
 
         with torch.no_grad():
             self.network.reset_noise()
-            ext, intr, logits, hidden = self.network(obs_tensor, hidden)
+            ext, intr, logits, hidden = self.network(obs_tensor, feature_tensor, hidden)
             ext = ext.squeeze(1)
             intr = intr.squeeze(1)
             logits = logits.squeeze(1)
@@ -648,21 +907,25 @@ class MEMECore:
         self.last_actions = actions.copy()
         self.last_policy_indices = policy_indices.copy()
         self.last_policy_dists = policy_dists.copy()
+        self.prev_action_ids = actions.copy()
         return actions
 
     # ------------------------------------------------------------------#
     # Intrinsic reward
     # ------------------------------------------------------------------#
 
-    def _compute_intrinsic(self, stack: torch.Tensor, env: int) -> float:
+    def _compute_intrinsic(self, stack: torch.Tensor, env: int) -> Tuple[float, float, float]:
+        if not self.use_intrinsic_rewards:
+            return 0.0, 0.0, 0.0
         with torch.no_grad():
             embedding = self.embedding_head(stack.unsqueeze(0)).cpu().numpy()[0]
         bonus_epi = self.episodic_modules[env].compute_bonus(embedding)
-        rnd_bonus = self.rnd.bonus(stack.unsqueeze(0)).cpu()
-        self.int_running.update(rnd_bonus.unsqueeze(-1))
-        rnd_normed = float(rnd_bonus / (self.int_running.var.sqrt() + 1e-6))
-        int_reward = float(bonus_epi * rnd_normed)
-        return float(np.clip(int_reward, 0.0, 1.0))
+        rnd_norm, rnd_raw = self.rnd.bonus(stack.unsqueeze(0))
+        rnd_norm = float(rnd_norm.squeeze().cpu().numpy())
+        rnd_raw = float(rnd_raw.squeeze().cpu().numpy())
+        alpha = np.clip(max(rnd_norm, 1.0), 1.0, 5.0)
+        intrinsic = float(np.clip(bonus_epi * alpha, 0.0, 1.0))
+        return intrinsic, rnd_norm, float(bonus_epi)
 
     # ------------------------------------------------------------------#
     # Observe
@@ -690,7 +953,7 @@ class MEMECore:
             done = bool(terminations[env] or truncations[env])
 
             stack_tensor = torch.from_numpy(self.state_stacks[env]).to(self.device, dtype=torch.float32) / 255.0
-            intrinsic_reward = self._compute_intrinsic(stack_tensor, env)
+            intrinsic_reward, rnd_component, epi_component = self._compute_intrinsic(stack_tensor, env)
 
             transition = Transition(
                 obs=self.state_stacks[env].copy(),
@@ -700,24 +963,53 @@ class MEMECore:
                 done=done,
                 policy_idx=policy_idx,
                 policy_probs=policy_probs.copy(),
+                features=self.last_features[env].copy(),
             )
             self.episode_buffers[env].append(transition)
             self.state_stacks[env] = next_stacks[env]
+            self.prev_ext_reward[env] = float(rewards[env])
+            self.prev_int_reward[env] = intrinsic_reward
+            self.prev_rnd_component[env] = rnd_component
+            self.prev_epi_component[env] = epi_component
+            if self.debug_probe_logging and self._debug_observe_counts[env] < 5:
+                self._debug_observe_counts[env] += 1
+                probs_preview = [round(float(x), 3) for x in policy_probs[: min(4, self.num_actions)]]
+                self._debug(
+                    f"observe env={env} action={action} reward_ext={float(rewards[env]):.3f} "
+                    f"reward_int={intrinsic_reward:.3f} done={done} policy_idx={policy_idx} "
+                    f"policy_probs={probs_preview} buffer_len={len(self.episode_buffers[env])}"
+                )
 
             if done:
-                self.replay.add_episode(self.episode_buffers[env])
+                episode_len = len(self.episode_buffers[env])
                 episode_return = sum(t.reward_ext for t in self.episode_buffers[env])
+                if self.debug_probe_logging:
+                    self._debug(
+                        f"episode_done env={env} len={episode_len} return={episode_return:.3f} policy_idx={policy_idx}"
+                    )
+                self.replay.add_episode(self.episode_buffers[env])
                 self.bandit.update(policy_idx, episode_return)
                 self.episode_buffers[env] = []
                 self.episodic_modules[env].reset()
                 self.lstm_hidden_h[env].zero_()
                 self.lstm_hidden_c[env].zero_()
+                self.prev_action_ids[env] = 0
+                self.prev_ext_reward[env] = 0.0
+                self.prev_int_reward[env] = 0.0
+                self.prev_rnd_component[env] = 0.0
+                self.prev_epi_component[env] = 0.0
+                self.prev_ap_embedding[env].fill(0.0)
 
         self.frame_count += self.num_envs
 
     # ------------------------------------------------------------------#
     # Training
     # ------------------------------------------------------------------#
+
+    def _transform_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
+        if not self.use_reward_transform:
+            return rewards
+        return torch.sign(rewards) * (torch.sqrt(rewards * rewards + 1.0) - 1.0) + 0.001 * rewards
 
     def _soft_watkins_returns(
         self,
@@ -768,6 +1060,15 @@ class MEMECore:
         else:
             result = torch.zeros(B, T, num_policies, device=self.device, dtype=q_online.dtype)
 
+        if self.debug_probe_logging and self._debug_return_logs < 5:
+            self._debug_return_logs += 1
+            self._debug(
+                "soft_watkins: "
+                f"ext={self._tensor_stats(rewards_ext)} "
+                f"int={self._tensor_stats(rewards_int)} "
+                f"result={self._tensor_stats(result)}"
+            )
+
         return result.squeeze(0) if not batched else result
 
     def _trust_region(
@@ -790,6 +1091,15 @@ class MEMECore:
 
         normalised_td = (td / sigma) * is_weights
         normalised_td = torch.nan_to_num(normalised_td, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(-1e3, 1e3)
+        if self.debug_probe_logging and self._debug_trust_region_calls < 5:
+            self._debug_trust_region_calls += 1
+            self._debug(
+                "trust_region: "
+                f"keep_ratio={float(mask.float().mean().item()):.3f} "
+                f"td={self._tensor_stats(td)} "
+                f"sigma={self._tensor_stats(sigma)} "
+                f"norm_td={self._tensor_stats(normalised_td)}"
+            )
         return mask, normalised_td
 
     def _ema_update(self) -> None:
@@ -797,12 +1107,101 @@ class MEMECore:
             for ema_param, param in zip(self.ema_network.parameters(), self.network.parameters()):
                 ema_param.data.mul_(self.ema_decay).add_(param.data, alpha=1.0 - self.ema_decay)
 
+    # ------------------------------------------------------------------#
+    # Debug helpers
+    # ------------------------------------------------------------------#
+
+    def _debug(self, msg: str) -> None:
+        if self.debug_probe_logging:
+            print(f"[MEME DEBUG] {msg}")
+
+    def _tensor_stats(self, tensor: torch.Tensor) -> str:
+        if tensor.numel() == 0:
+            return "empty"
+        data = tensor.detach()
+        return (
+            f"shape={tuple(data.shape)} "
+            f"min={float(data.min().item()):.4f} "
+            f"mean={float(data.mean().item()):.4f} "
+            f"max={float(data.max().item()):.4f}"
+        )
+
+    def _format_vector(self, tensor: torch.Tensor, limit: int = 6) -> List[float]:
+        if tensor.numel() == 0:
+            return []
+        data = tensor.detach().cpu().flatten()
+        limit = min(limit, data.numel())
+        return [round(float(x), 4) for x in data[:limit].tolist()]
+
+    def _log_debug_batch(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+        rew_ext: torch.Tensor,
+        rew_int: torch.Tensor,
+        dones: torch.Tensor,
+        p_idx: torch.Tensor,
+        p_probs: torch.Tensor,
+    ) -> None:
+        if obs.size(0) == 0:
+            return
+        sample = 0
+        obs_sample = obs[sample].float()
+        frame_means = obs_sample[:, -1].mean(dim=(1, 2))
+        summary = {
+            "obs_shape": tuple(obs.shape),
+            "actions": actions[sample, self.burn_in : self.burn_in + 5].tolist(),
+            "rew_ext": self._format_vector(rew_ext[sample, self.burn_in : self.burn_in + 5]),
+            "rew_int": self._format_vector(rew_int[sample, self.burn_in : self.burn_in + 5]),
+            "dones": dones[sample, self.burn_in : self.burn_in + 5].tolist(),
+            "policy_idx": p_idx[sample, self.burn_in : self.burn_in + 5].tolist(),
+            "frame_means": [round(float(x), 2) for x in frame_means[-5:].tolist()],
+            "policy_probs": self._format_vector(p_probs[sample, self.burn_in], limit=4),
+        }
+        self._debug(f"batch snapshot: {summary}")
+
+    def _log_debug_returns(
+        self,
+        rew_ext: torch.Tensor,
+        rew_int: torch.Tensor,
+        returns: torch.Tensor,
+    ) -> None:
+        if returns.numel() == 0:
+            return
+        ret_mean = returns.mean(dim=2)
+        summary = {
+            "rew_ext_stats": self._tensor_stats(rew_ext[:, self.burn_in :]),
+            "rew_int_stats": self._tensor_stats(rew_int[:, self.burn_in :]),
+            "returns_stats": self._tensor_stats(returns),
+            "returns_sample": self._format_vector(ret_mean[0, : min(3, ret_mean.size(1))]),
+        }
+        self._debug(f"return targets: {summary}")
+
+    def _log_debug_policy(self, teacher: torch.Tensor, log_probs: torch.Tensor) -> None:
+        if teacher.numel() == 0 or log_probs.numel() == 0:
+            return
+        if log_probs.dim() == 4:
+            policy_slice = log_probs[0, 0, 0]
+        else:
+            policy_slice = log_probs[0, 0]
+        dist_teacher = self._format_vector(teacher[0, 0], limit=6)
+        policy_probs = self._format_vector(policy_slice.exp(), limit=6)
+        self._debug(
+            f"policy sample: teacher={dist_teacher} policy_probs={policy_probs} "
+            f"log_probs_stats={self._tensor_stats(log_probs)}"
+        )
+
     def train_step(self) -> None:
         self._train_call_count += 1
         if self._train_call_count % self.train_interval != 0:
             return
 
         self.last_metrics = {}
+        if self.debug_probe_logging:
+            self._debug_logged_batch = False
+            self._debug_logged_returns = False
+            self._debug_logged_policy = False
+            self._debug_trust_region_calls = 0
 
         sequences, indices, weights = self.replay.sample(self.batch_size)
         if not sequences:
@@ -849,8 +1248,14 @@ class MEMECore:
         p_probs = torch.from_numpy(
             np.stack([np.ascontiguousarray(seq.policy_probs) for seq, _, _ in valid_entries]).astype(np.float32, copy=False)
         )
+        features = torch.from_numpy(
+            np.stack([np.ascontiguousarray(seq.features) for seq, _, _ in valid_entries]).astype(np.float32, copy=False)
+        )
         sample_weights = torch.stack([w for _, _, w in valid_entries]).to(self.device).view(B, 1)
         replay_indices = [int(idx) for _, idx, _ in valid_entries]
+        if self.debug_probe_logging and not self._debug_logged_batch:
+            self._log_debug_batch(obs, actions, rew_ext, rew_int, dones, p_idx, p_probs)
+            self._debug_logged_batch = True
 
         micro = self.train_micro_batch or B
         micro = max(1, min(micro, B))
@@ -881,6 +1286,7 @@ class MEMECore:
             p_idx_mb = p_idx[start:end].to(self.device, dtype=torch.long, non_blocking=True)
             p_probs_mb = p_probs[start:end].to(self.device, dtype=torch.float32, non_blocking=True)
             sample_w_mb = sample_weights[start:end]
+            features_mb = features[start:end].to(self.device, dtype=torch.float32, non_blocking=True)
 
             if self.use_amp:
                 if hasattr(torch, "amp"):
@@ -890,19 +1296,23 @@ class MEMECore:
             else:
                 autocast_ctx = contextlib.nullcontext()
             with autocast_ctx:
-                ext, intr, logits, _ = self.network(obs_mb)
+                ext, intr, logits, _ = self.network(obs_mb, features_mb)
                 ext, intr, logits = [x[:, self.burn_in :] for x in (ext, intr, logits)]
 
                 q_online = ext + self.policy_betas.view(1, 1, -1, 1) * intr
 
+                rew_ext_train = self._transform_rewards(rew_ext_mb[:, self.burn_in :])
                 returns = self._soft_watkins_returns(
                     q_online,
-                    rew_ext_mb[:, self.burn_in :],
+                    rew_ext_train,
                     rew_int_mb[:, self.burn_in :],
                     dones_mb[:, self.burn_in :],
                     p_probs_mb[:, self.burn_in :],
                 )
                 returns = torch.nan_to_num(returns, nan=0.0, posinf=1e6, neginf=-1e6).clamp_(-1e3, 1e3)
+                if self.debug_probe_logging and not self._debug_logged_returns:
+                    self._log_debug_returns(rew_ext_mb[:, self.burn_in :], rew_int_mb[:, self.burn_in :], returns)
+                    self._debug_logged_returns = True
 
                 act = actions_mb[:, self.burn_in :].unsqueeze(-1).unsqueeze(-1).expand(-1, -1, self.num_policies, 1)
                 q_taken_all = q_online.gather(3, act).squeeze(3)
@@ -933,6 +1343,9 @@ class MEMECore:
                 teacher_expanded = teacher.unsqueeze(2)
                 kl = torch.sum(teacher_expanded * (torch.log(teacher_expanded + 1e-8) - log_probs), dim=-1)
                 kl_mask = (kl <= self.policy_kl_clip).float()
+                if self.debug_probe_logging and not self._debug_logged_policy:
+                    self._log_debug_policy(teacher, log_probs[:, :, 0, :])
+                    self._debug_logged_policy = True
                 loss_policy = -(kl_mask * (teacher_expanded * log_probs).sum(-1)).mean()
 
                 loss = self.eta * loss_behaviour + (1 - self.eta) * loss_aux + loss_policy
@@ -986,6 +1399,7 @@ class MEMECore:
                     self.running_td_std[pol] = 0.99 * self.running_td_std[pol] + 0.01 * avg_std
 
         denom = float(total_samples)
+        self.last_td_error = float(td_abs_sum / denom) if denom > 0 else 0.0
         self.last_metrics = {
             "loss/total": float(loss_total_sum / denom),
             "loss/behaviour": float(loss_behaviour_sum / denom),
