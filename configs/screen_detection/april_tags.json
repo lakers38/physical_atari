@@ -7,10 +7,11 @@
         "refine_edges": 2,
         "decode_sharpening": 0.25
     },
+    "_comment": "maps the tag location -> corner index",
     "corners": {
-        "TAG_ID_TOP_LEFT": 0,
-        "TAG_ID_TOP_RIGHT": 1,
-        "TAG_ID_BOTTOM_RIGHT": 2,
-        "TAG_ID_BOTTOM_LEFT": 3
+        "TAG_ID_TOP_LEFT": 1,
+        "TAG_ID_TOP_RIGHT": 0,
+        "TAG_ID_BOTTOM_RIGHT": 3,
+        "TAG_ID_BOTTOM_LEFT": 2
     }
 }

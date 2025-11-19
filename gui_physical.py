@@ -487,9 +487,6 @@ class GuiRenderContent:
 
             try:
                 self.current_screen_rect, last_detected_tags = self.screen_detector.get_screen_rect_info(frame_g)
-                detected_tag_ids = sorted(last_detected_tags.keys()) if last_detected_tags else []
-                if detected_tag_ids:
-                    logger.info(f"AprilTags detected: {detected_tag_ids} ({'VALID' if len(detected_tag_ids) == 4 else f'need {4-len(detected_tag_ids)} more'})")
             except Exception as e:
                 logger.error(f"Screen detection error: {e}", exc_info=True)
                 self.current_screen_rect = None
@@ -1460,11 +1457,33 @@ class ScreenDetectionEditor(EditorBase):
                     if dpg.does_item_exist(corner_tag):
                         dpg.delete_item(corner_tag)
 
+                    # Delete corner index labels
+                    corner_idx_tag = f"tag_{i}_corner_{t}_idx"
+                    if dpg.does_item_exist(corner_idx_tag):
+                        dpg.delete_item(corner_idx_tag)
+
                 id_tag = f"tag_{i}_id"
                 if dpg.does_item_exist(id_tag):
                     dpg.delete_item(id_tag)
 
+                # Delete rectification corner markers
+                rect_corner_tag = f"tag_{i}_rect_corner"
+                if dpg.does_item_exist(rect_corner_tag):
+                    dpg.delete_item(rect_corner_tag)
+
             if self.curr_tags is not None:
+                # Load corner indices used for rectification from config
+                with open(self.detection_config) as df:
+                    detection_data = json.load(df)
+                corner_mapping = detection_data.get("corners", {})
+                # Map tag_id to corner_idx: {0: 0, 1: 1, 2: 2, 3: 3}
+                tag_corner_indices = {
+                    0: corner_mapping.get("TAG_ID_TOP_LEFT", None),
+                    1: corner_mapping.get("TAG_ID_TOP_RIGHT", None),
+                    2: corner_mapping.get("TAG_ID_BOTTOM_RIGHT", None),
+                    3: corner_mapping.get("TAG_ID_BOTTOM_LEFT", None),
+                }
+
                 for i, (tag_id, corners) in enumerate(self.curr_tags.items()):
                     # corners are in camera space, scale to display resolution
                     corners = self._camera_to_gui(corners, self.scale[0], self.scale[1])
@@ -1482,6 +1501,18 @@ class ScreenDetectionEditor(EditorBase):
                         )
                         center_x += corners[idx][0]
                         center_y += corners[idx][1]
+
+                        # Draw corner index label (c0, c1, c2, c3)
+                        corner_pos = corners[idx]
+                        dpg.draw_text(
+                            (corner_pos[0] - 10, corner_pos[1] - 10),
+                            f"c{idx}",
+                            color=(255, 255, 0),  # Yellow text
+                            size=15,
+                            parent=self.draw_list,
+                            tag=f"tag_{i}_corner_{idx}_idx",
+                        )
+
                     center_x /= num_corners
                     center_y /= num_corners
                     dpg.draw_text(
@@ -1492,6 +1523,20 @@ class ScreenDetectionEditor(EditorBase):
                         parent=self.draw_list,
                         tag=f"tag_{i}_id",
                     )
+
+                    # Draw a circle on the corner used for rectification
+                    rect_corner_idx = tag_corner_indices.get(tag_id, 0)
+                    if rect_corner_idx < len(corners):
+                        rect_corner_pos = corners[rect_corner_idx]
+                        dpg.draw_circle(
+                            center=rect_corner_pos,
+                            radius=8,
+                            color=(255, 255, 0),  # Yellow outline
+                            fill=(255, 0, 0),      # Red fill
+                            thickness=2,
+                            parent=self.draw_list,
+                            tag=f"tag_{i}_rect_corner",
+                        )
 
             self.tags_require_update = False
 
@@ -2828,104 +2873,6 @@ class PhysicalGui:
             )
             dpg.configure_item("rect_mode_detail", color=(200, 200, 200))
 
-    def _draw_apriltag_boxes(self, cam_frame_fp32, tags):
-        """Draw bounding boxes and labels around detected AprilTags based on apriltags.json config"""
-
-        # AprilTags config, equivalent to apriltags.json
-        # (id : semantic role)
-        apriltag_roles = {
-            0: "TOP_LEFT",
-            1: "TOP_RIGHT",
-            2: "BOTTOM_RIGHT",
-            3: "BOTTOM_LEFT"
-        }
-
-        # Colors for each role
-        role_colors = {
-            "TOP_LEFT": (1.0, 0.0, 0.0),       # Red
-            "TOP_RIGHT": (0.0, 1.0, 0.0),      # Green
-            "BOTTOM_RIGHT": (0.0, 0.0, 1.0),   # Blue
-            "BOTTOM_LEFT": (1.0, 1.0, 0.0),    # Yellow
-        }
-
-        if cam_frame_fp32 is None or not tags:
-            return cam_frame_fp32
-
-        frame = cam_frame_fp32.copy()
-        cam_to_display_scale_x = self.display_cam_dims[0] / self.camera_dims[0]
-        cam_to_display_scale_y = self.display_cam_dims[1] / self.camera_dims[1]
-
-        for tag_id, corners in tags.items():
-            role = apriltag_roles.get(tag_id)
-            if role is None:
-                continue
-            color = role_colors.get(role, (1.0, 1.0, 1.0))
-
-            # Scale corners to display dimensions
-            corners_scaled = np.array(corners, dtype=np.float32)
-            corners_scaled[:, 0] *= cam_to_display_scale_x
-            corners_scaled[:, 1] *= cam_to_display_scale_y
-            corners_scaled = corners_scaled.astype(np.int32)
-
-            # Draw polygon around tag
-            for i in range(4):
-                pt1 = tuple(corners_scaled[i])
-                pt2 = tuple(corners_scaled[(i + 1) % 4])
-                self._draw_line_on_fp32(frame, pt1, pt2, color, thickness=2)
-
-            # Draw tag label at first corner (role and ID)
-            text_pos = tuple(corners_scaled[0])
-            # Example: "ID:2 (BOTTOM_RIGHT)"
-            self._draw_text_on_fp32(frame, f"ID:{tag_id} ({role})", text_pos, color)
-
-        return frame
-
-    def _draw_line_on_fp32(self, img, pt1, pt2, color, thickness=2):
-        """Draw a line on a float32 RGB image (0-1 range)"""
-        h, w = img.shape[:2]
-        # Simple line drawing using NumPy (for thick lines, we'll just draw circles at points)
-        x0, y0 = pt1
-        x1, y1 = pt2
-
-        # Bresenham's line algorithm
-        dx = abs(x1 - x0)
-        dy = abs(y1 - y0)
-        sx = 1 if x0 < x1 else -1
-        sy = 1 if y0 < y1 else -1
-        err = dx - dy
-
-        while True:
-            # Draw a small circle for thickness
-            for dy_off in range(-thickness//2, thickness//2 + 1):
-                for dx_off in range(-thickness//2, thickness//2 + 1):
-                    px, py = x0 + dx_off, y0 + dy_off
-                    if 0 <= px < w and 0 <= py < h:
-                        img[py, px] = color
-
-            if x0 == x1 and y0 == y1:
-                break
-
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                x0 += sx
-            if e2 < dx:
-                err += dx
-                y0 += sy
-
-    def _draw_text_on_fp32(self, img, text, pos, color):
-        """Draw simple text on a float32 RGB image"""
-        # For simplicity, just draw a filled rectangle as background and skip actual text rendering
-        # DearPyGUI doesn't easily support text rendering on textures, so we'll just mark the position
-        x, y = pos
-        h, w = img.shape[:2]
-        # Draw a small filled circle to mark the tag position
-        for dy in range(-8, 9):
-            for dx in range(-8, 9):
-                if dx*dx + dy*dy <= 64:  # Circle of radius 8
-                    px, py = x + dx, y + dy
-                    if 0 <= px < w and 0 <= py < h:
-                        img[py, px] = color
 
     def scale_rect_frame(self, new_scale):
         self.rect_frame_scale = new_scale
@@ -3079,13 +3026,6 @@ class PhysicalGui:
                 self.reset_per_run_graphs = False
 
             cam_frame_dirty = False
-
-            # Draw AprilTag bounding boxes if tags are detected
-            if data_dict is not None and "tags" in data_dict and data_dict["tags"]:
-                tags = data_dict["tags"]
-                # Draw boxes around detected AprilTags
-                cam_frame_fp32 = self._draw_apriltag_boxes(cam_frame_fp32, tags)
-                cam_frame_dirty = True
 
             if self.screen_detection_editor is not None:
                 cam_frame_fp32, cam_frame_dirty_editor = self.screen_detection_editor.compute_overlay(

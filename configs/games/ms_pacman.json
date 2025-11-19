@@ -18,15 +18,15 @@
         "checkpoint": "assets/models/ms_pacman_score_lives.pt",
         "score_crop_info": {
             "x": 55,
-            "y": 184,
+            "y": 198,
             "w": 48,
             "h": 12,
             "num_digits": 6
         },
         "lives_crop_info": {
             "x": 11,
-            "y": 171,
-            "w": 25,
+            "y": 187,
+            "w": 27,
             "h": 14,
             "num_digits": 2
         },
