@@ -485,7 +485,15 @@ class GuiRenderContent:
             frame_g = self.camera.convert_to_grayscale(frame)
             frame_num = frame_data["frame_number"]
 
-            self.current_screen_rect, last_detected_tags = self.screen_detector.get_screen_rect_info(frame_g)
+            try:
+                self.current_screen_rect, last_detected_tags = self.screen_detector.get_screen_rect_info(frame_g)
+                detected_tag_ids = sorted(last_detected_tags.keys()) if last_detected_tags else []
+                if detected_tag_ids:
+                    logger.info(f"AprilTags detected: {detected_tag_ids} ({'VALID' if len(detected_tag_ids) == 4 else f'need {4-len(detected_tag_ids)} more'})")
+            except Exception as e:
+                logger.error(f"Screen detection error: {e}", exc_info=True)
+                self.current_screen_rect = None
+                last_detected_tags = {}
 
             frame = self.camera.convert_to_rgb(frame)
 
@@ -526,10 +534,10 @@ class GuiRenderContent:
 
             curr_time = time.time()
             target_time = last_frame_time + target_frame_time
-            # delta_time = curr_time - last_frame_time
+            delta_time = curr_time - last_frame_time
             sleep_time = target_time - curr_time
             if sleep_time < 0.0:
-                # logger.warning(f"frame took too long: dt={delta_time*1000.0:.2f}ms > target ft={target_frame_time*1000.0:.2f}ms")
+                logger.warning(f"frame took too long: dt={delta_time*1000.0:.2f}ms > target ft={target_frame_time*1000.0:.2f}ms")
                 sleep_time = 0.0
 
             time.sleep(sleep_time)
@@ -1039,33 +1047,27 @@ class CameraControlEditor(EditorBase):
         self.camera_config = camera_config
 
         ctrls = get_controls(self.device_idx)
+
+        # Header
+        dpg.add_text("Camera Controls (from v4l2-ctl)", color=(255, 255, 100))
+        dpg.add_separator()
+
         for name, ctrl in ctrls.items():
-            if ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None):
-                with dpg.group(label=ctrl['name']):
-                    # tooltip = f" ({ctrl['description']})" if ctrl['description'] else ""
-                    tag_name = f"{ctrl['name']}_slider"
-                    dpg.add_slider_int(
-                        label=ctrl['name'],  # + tooltip,
-                        min_value=ctrl['min'],
-                        max_value=ctrl['max'],
-                        default_value=ctrl['value'],
-                        # step=ctrl['step'],
-                        tag=tag_name,
-                        callback=lambda sender, app_data, user_data: self._control_callback(
-                            sender, app_data, user_data
-                        ),
-                        user_data={**ctrl},
-                    )
-                    dpg.bind_item_theme(tag_name, "slider_theme")
-                    self.control_tags.append(tag_name)
-            else:
-                # Create a toggle (checkbox) for controls that only have a default value
-                with dpg.group(label=ctrl['name']):
-                    # tooltip = f" ({ctrl['description']})" if ctrl['description'] else ""
+            ctrl_type = ctrl.get('type', 'unknown')
+            has_range = ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None)
+
+            with dpg.group(horizontal=False):
+                if ctrl_type == 'bool' or (not has_range and ctrl_type != 'menu'):
+                    # Boolean control
                     tag_name = f"{ctrl['name']}_checkbox"
+                    current_value = bool(ctrl.get('value', ctrl.get('default', 0)))
+                    label = ctrl['name']
+                    if 'desc' in ctrl:
+                        label += f" ({ctrl['desc']})"
+
                     dpg.add_checkbox(
-                        label=ctrl['name'],  # + tooltip,
-                        default_value=bool(ctrl['value']),
+                        label=label,
+                        default_value=current_value,
                         tag=tag_name,
                         callback=lambda sender, app_data, user_data: self._control_callback(
                             sender, app_data, user_data
@@ -1074,6 +1076,40 @@ class CameraControlEditor(EditorBase):
                     )
                     dpg.bind_item_theme(tag_name, "checkbox_theme")
                     self.control_tags.append(tag_name)
+
+                elif has_range:
+                    # Numeric control with range
+                    tag_name = f"{ctrl['name']}_slider"
+                    current_value = ctrl.get('value', ctrl.get('default', ctrl['min']))
+                    label = ctrl['name']
+
+                    # Value display text
+                    value_text_tag = f"{ctrl['name']}_value_text"
+                    dpg.add_text(
+                        f"{label}: {current_value} (min={ctrl['min']}, max={ctrl['max']})",
+                        tag=value_text_tag,
+                        color=(200, 200, 200)
+                    )
+
+                    dpg.add_slider_int(
+                        label="",
+                        min_value=ctrl['min'],
+                        max_value=ctrl['max'],
+                        default_value=current_value,
+                        width=-1,
+                        tag=tag_name,
+                        callback=lambda sender, app_data, user_data: self._control_callback(
+                            sender, app_data, user_data
+                        ),
+                        user_data={**ctrl, 'value_text_tag': value_text_tag},
+                    )
+                    dpg.bind_item_theme(tag_name, "slider_theme")
+                    self.control_tags.append(tag_name)
+                    self.control_tags.append(value_text_tag)
+
+                else:
+                    # Menu or unknown type
+                    dpg.add_text(f"{ctrl['name']}: {ctrl.get('value', 'N/A')} [{ctrl_type}]", color=(150, 150, 150))
 
         dpg.add_spacer()
         dpg.add_button(
@@ -1099,7 +1135,14 @@ class CameraControlEditor(EditorBase):
     def enable(self, enabled: bool):
         self.enabled = enabled
         for tag in self.control_tags:
-            dpg.configure_item(tag, enabled=enabled)
+            # Skip text labels (they don't support enabled parameter)
+            if tag.endswith('_value_text'):
+                continue
+            try:
+                dpg.configure_item(tag, enabled=enabled)
+            except (SystemError, KeyError):
+                # Some items don't support enabled parameter, skip them
+                pass
 
     def draw(self):
         # no custom draw required
@@ -1127,6 +1170,15 @@ class CameraControlEditor(EditorBase):
         if isinstance(ctrl_value, bool):
             ctrl_value = 1 if ctrl_value else 0
 
+        # Update value display text if it exists
+        if 'value_text_tag' in user_data:
+            value_text_tag = user_data['value_text_tag']
+            label = user_data['name']
+            ctrl_min = user_data.get('min', 0)
+            ctrl_max = user_data.get('max', 100)
+            dpg.set_value(value_text_tag, f"{label}: {ctrl_value} (min={ctrl_min}, max={ctrl_max})")
+
+        # Apply the control value
         subprocess.run(['v4l2-ctl', '-d', str(self.device_idx), '--set-ctrl', f'{ctrl_name}={ctrl_value}'])
 
     # Refresh values from v4l2 in case of external changes
@@ -1134,18 +1186,36 @@ class CameraControlEditor(EditorBase):
         ctrls = get_controls(self.device_idx)
         # logger.debug(ctrls)
         for name, ctrl in ctrls.items():
-            if ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None):
+            has_range = ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None)
+
+            if has_range:
                 tag_name = f"{ctrl['name']}_slider"
+                value_text_tag = f"{ctrl['name']}_value_text"
+
+                # Update slider value
+                ctrl_value = ctrl['value']
+                try:
+                    dpg.set_value(tag_name, ctrl_value)
+                except:
+                    pass
+
+                # Update text label
+                try:
+                    label = ctrl['name']
+                    dpg.set_value(value_text_tag, f"{label}: {ctrl_value} (min={ctrl['min']}, max={ctrl['max']})")
+                except:
+                    pass
             else:
                 tag_name = f"{ctrl['name']}_checkbox"
+                ctrl_value = ctrl['value']
 
-            ctrl_value = ctrl['value']
-            # check the type of the current value to see if we
-            # need to convert to bool.
-            if isinstance(dpg.get_value(tag_name), bool):
-                ctrl_value = True if ctrl_value else False
-
-            dpg.set_value(tag_name, ctrl_value)
+                # Check the type of the current value to see if we need to convert to bool
+                try:
+                    if isinstance(dpg.get_value(tag_name), bool):
+                        ctrl_value = True if ctrl_value else False
+                    dpg.set_value(tag_name, ctrl_value)
+                except:
+                    pass
 
     def _save_to_config_callback(self, sender, app_data):
         ctrls = get_controls(self.device_idx)
@@ -2758,6 +2828,105 @@ class PhysicalGui:
             )
             dpg.configure_item("rect_mode_detail", color=(200, 200, 200))
 
+    def _draw_apriltag_boxes(self, cam_frame_fp32, tags):
+        """Draw bounding boxes and labels around detected AprilTags based on apriltags.json config"""
+
+        # AprilTags config, equivalent to apriltags.json
+        # (id : semantic role)
+        apriltag_roles = {
+            0: "TOP_LEFT",
+            1: "TOP_RIGHT",
+            2: "BOTTOM_RIGHT",
+            3: "BOTTOM_LEFT"
+        }
+
+        # Colors for each role
+        role_colors = {
+            "TOP_LEFT": (1.0, 0.0, 0.0),       # Red
+            "TOP_RIGHT": (0.0, 1.0, 0.0),      # Green
+            "BOTTOM_RIGHT": (0.0, 0.0, 1.0),   # Blue
+            "BOTTOM_LEFT": (1.0, 1.0, 0.0),    # Yellow
+        }
+
+        if cam_frame_fp32 is None or not tags:
+            return cam_frame_fp32
+
+        frame = cam_frame_fp32.copy()
+        cam_to_display_scale_x = self.display_cam_dims[0] / self.camera_dims[0]
+        cam_to_display_scale_y = self.display_cam_dims[1] / self.camera_dims[1]
+
+        for tag_id, corners in tags.items():
+            role = apriltag_roles.get(tag_id)
+            if role is None:
+                continue
+            color = role_colors.get(role, (1.0, 1.0, 1.0))
+
+            # Scale corners to display dimensions
+            corners_scaled = np.array(corners, dtype=np.float32)
+            corners_scaled[:, 0] *= cam_to_display_scale_x
+            corners_scaled[:, 1] *= cam_to_display_scale_y
+            corners_scaled = corners_scaled.astype(np.int32)
+
+            # Draw polygon around tag
+            for i in range(4):
+                pt1 = tuple(corners_scaled[i])
+                pt2 = tuple(corners_scaled[(i + 1) % 4])
+                self._draw_line_on_fp32(frame, pt1, pt2, color, thickness=2)
+
+            # Draw tag label at first corner (role and ID)
+            text_pos = tuple(corners_scaled[0])
+            # Example: "ID:2 (BOTTOM_RIGHT)"
+            self._draw_text_on_fp32(frame, f"ID:{tag_id} ({role})", text_pos, color)
+
+        return frame
+
+    def _draw_line_on_fp32(self, img, pt1, pt2, color, thickness=2):
+        """Draw a line on a float32 RGB image (0-1 range)"""
+        h, w = img.shape[:2]
+        # Simple line drawing using NumPy (for thick lines, we'll just draw circles at points)
+        x0, y0 = pt1
+        x1, y1 = pt2
+
+        # Bresenham's line algorithm
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+
+        while True:
+            # Draw a small circle for thickness
+            for dy_off in range(-thickness//2, thickness//2 + 1):
+                for dx_off in range(-thickness//2, thickness//2 + 1):
+                    px, py = x0 + dx_off, y0 + dy_off
+                    if 0 <= px < w and 0 <= py < h:
+                        img[py, px] = color
+
+            if x0 == x1 and y0 == y1:
+                break
+
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
+
+    def _draw_text_on_fp32(self, img, text, pos, color):
+        """Draw simple text on a float32 RGB image"""
+        # For simplicity, just draw a filled rectangle as background and skip actual text rendering
+        # DearPyGUI doesn't easily support text rendering on textures, so we'll just mark the position
+        x, y = pos
+        h, w = img.shape[:2]
+        # Draw a small filled circle to mark the tag position
+        for dy in range(-8, 9):
+            for dx in range(-8, 9):
+                if dx*dx + dy*dy <= 64:  # Circle of radius 8
+                    px, py = x + dx, y + dy
+                    if 0 <= px < w and 0 <= py < h:
+                        img[py, px] = color
+
     def scale_rect_frame(self, new_scale):
         self.rect_frame_scale = new_scale
         if self.score_detection_editor is not None:
@@ -2827,7 +2996,7 @@ class PhysicalGui:
                 # logger.debug(val.shape)
                 if self.display_cam_dims[0] != cam_frame.shape[1] or self.display_cam_dims[1] != cam_frame.shape[0]:
                     cam_frame = cv2.resize(cam_frame, self.display_cam_dims, interpolation=cv2.INTER_LINEAR)
-                cam_frame_fp32 = np.clip(cam_frame[:, :, ::-1].astype(np.float32) * (1.0 / 255.0), 0.0, 1.0)
+                cam_frame_fp32 = np.clip(cam_frame.astype(np.float32) * (1.0 / 255.0), 0.0, 1.0)
                 cam_frame_needs_update = True
                 # logger.debug(f'cam: {(time.time()-start) * 1000.0:.2f}')
 
@@ -2910,10 +3079,19 @@ class PhysicalGui:
                 self.reset_per_run_graphs = False
 
             cam_frame_dirty = False
+
+            # Draw AprilTag bounding boxes if tags are detected
+            if data_dict is not None and "tags" in data_dict and data_dict["tags"]:
+                tags = data_dict["tags"]
+                # Draw boxes around detected AprilTags
+                cam_frame_fp32 = self._draw_apriltag_boxes(cam_frame_fp32, tags)
+                cam_frame_dirty = True
+
             if self.screen_detection_editor is not None:
-                cam_frame_fp32, cam_frame_dirty = self.screen_detection_editor.compute_overlay(
+                cam_frame_fp32, cam_frame_dirty_editor = self.screen_detection_editor.compute_overlay(
                     cam_frame_fp32, alpha=0.4
                 )
+                cam_frame_dirty = cam_frame_dirty or cam_frame_dirty_editor
 
             if cam_frame_needs_update or cam_frame_dirty:
                 dpg.set_value("camera_texture", np.ascontiguousarray(cam_frame_fp32))

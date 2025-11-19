@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
+from typing import Optional
 
 from framework.Logger import logger
 
@@ -139,7 +140,7 @@ class ScoreDetector:
             return None
 
     # np.ndarray: h,w,c
-    def get_score_and_lives(self, frame) -> tuple[int, int | None]:
+    def get_score_and_lives(self, frame) -> tuple[int, Optional[int]]:
         # total_start = time.time()
         has_lives = self.lives_crop_info is not None
         frame_w, frame_h = frame.shape[1], frame.shape[0]

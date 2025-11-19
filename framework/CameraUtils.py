@@ -33,27 +33,68 @@ def set_control(device_idx, ctrl_name, ctrl_value):
 
 
 def parse_control(line):
+    """
+    Parse v4l2-ctl --list-ctrls output line.
+    Format: control_name 0xHEXID (type) : min=X max=Y step=Z default=W value=V
+    Example: brightness 0x00980900 (int) : min=-30 max=30 step=1 default=0 value=27
+    """
     parts = line.split(':')
     if len(parts) < 2:
         return None
 
+    # Parse left side: "control_name 0xHEXID (type)"
     name_part = parts[0].strip()
-    control_name = name_part.split()[0]
+    name_tokens = name_part.split()
+    if not name_tokens:
+        return None
+
+    control_name = name_tokens[0]
+
+    # Extract type if present
+    control_type = None
+    for token in name_tokens:
+        if token.startswith('(') and token.endswith(')'):
+            control_type = token.strip('()')
+
+    # Parse right side: "min=X max=Y step=Z default=W value=V flags=..."
     control_data = parts[1].strip()
-    data = control_data.split()
 
-    control = {'name': control_name}
+    control = {
+        'name': control_name,
+        'type': control_type
+    }
 
-    for d in data:
-        if '=' in d:
-            key, value = d.split('=')
+    # Parse key=value pairs
+    tokens = control_data.split()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+
+        if '=' in token:
+            key, value = token.split('=', 1)
+
+            # Try to parse as int
             try:
                 value = int(value)
             except ValueError:
+                # Keep as string (e.g., for menu options in parentheses)
                 pass
+
             control[key] = value
-        elif '(' in d:  # description is optional
-            control['desc'] = d.strip('()')
+
+        # Handle multi-token values like "value=3 (Aperture Priority Mode)"
+        elif token.startswith('(') and i > 0:
+            # This is a description for the previous value
+            description_parts = [token]
+            i += 1
+            # Collect tokens until we find closing paren
+            while i < len(tokens) and not tokens[i-1].endswith(')'):
+                description_parts.append(tokens[i])
+                i += 1
+            control['desc'] = ' '.join(description_parts).strip('()')
+            continue
+
+        i += 1
 
     return control
 

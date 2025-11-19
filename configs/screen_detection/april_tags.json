@@ -2,15 +2,15 @@
     "name": "dt_apriltags",
     "detection_config": {
         "family": "tag36h11",
-        "quad_decimate": 2.0,
-        "quad_sigma": 0.8,
-        "refine_edges": 1,
-        "decode_sharpening": 0.5
+        "quad_decimate": 1.0,
+        "quad_sigma": 0.0,
+        "refine_edges": 2,
+        "decode_sharpening": 0.25
     },
     "corners": {
-        "TAG_ID_TOP_LEFT": 2,
-        "TAG_ID_TOP_RIGHT": 3,
-        "TAG_ID_BOTTOM_RIGHT": 0,
-        "TAG_ID_BOTTOM_LEFT": 1
+        "TAG_ID_TOP_LEFT": 0,
+        "TAG_ID_TOP_RIGHT": 1,
+        "TAG_ID_BOTTOM_RIGHT": 2,
+        "TAG_ID_BOTTOM_LEFT": 3
     }
 }
