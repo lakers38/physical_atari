@@ -479,6 +479,7 @@ def main(args):
                 logger.info('writing ' + filename)
                 torch.tensor(agent.train_losses).cpu().numpy().tofile(filename)
 
+                assert args.save_model == True, "save_model must be True to save the model"
                 if args.save_model:
                     filename = f'{run_dir}/{game}_{args.agent_type}.model'
                     logger.info('writing ' + filename)

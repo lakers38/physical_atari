@@ -792,8 +792,8 @@ def main():
     data_dir = './results'
     os.makedirs(data_dir, exist_ok=True)
 
-    save_model = False
-    save_incremental_models = False
+    save_model = True
+    save_incremental_models = True
     last_model_save = -1
 
     # phoenix in particular has the opportunity to hide in a corner from the boss fight and never collect any rewards, so
