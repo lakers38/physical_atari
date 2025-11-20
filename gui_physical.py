@@ -485,7 +485,12 @@ class GuiRenderContent:
             frame_g = self.camera.convert_to_grayscale(frame)
             frame_num = frame_data["frame_number"]
 
-            self.current_screen_rect, last_detected_tags = self.screen_detector.get_screen_rect_info(frame_g)
+            try:
+                self.current_screen_rect, last_detected_tags = self.screen_detector.get_screen_rect_info(frame_g)
+            except Exception as e:
+                logger.error(f"Screen detection error: {e}", exc_info=True)
+                self.current_screen_rect = None
+                last_detected_tags = {}
 
             frame = self.camera.convert_to_rgb(frame)
 
@@ -526,10 +531,10 @@ class GuiRenderContent:
 
             curr_time = time.time()
             target_time = last_frame_time + target_frame_time
-            # delta_time = curr_time - last_frame_time
+            delta_time = curr_time - last_frame_time
             sleep_time = target_time - curr_time
             if sleep_time < 0.0:
-                # logger.warning(f"frame took too long: dt={delta_time*1000.0:.2f}ms > target ft={target_frame_time*1000.0:.2f}ms")
+                logger.warning(f"frame took too long: dt={delta_time*1000.0:.2f}ms > target ft={target_frame_time*1000.0:.2f}ms")
                 sleep_time = 0.0
 
             time.sleep(sleep_time)
@@ -1039,33 +1044,27 @@ class CameraControlEditor(EditorBase):
         self.camera_config = camera_config
 
         ctrls = get_controls(self.device_idx)
+
+        # Header
+        dpg.add_text("Camera Controls (from v4l2-ctl)", color=(255, 255, 100))
+        dpg.add_separator()
+
         for name, ctrl in ctrls.items():
-            if ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None):
-                with dpg.group(label=ctrl['name']):
-                    # tooltip = f" ({ctrl['description']})" if ctrl['description'] else ""
-                    tag_name = f"{ctrl['name']}_slider"
-                    dpg.add_slider_int(
-                        label=ctrl['name'],  # + tooltip,
-                        min_value=ctrl['min'],
-                        max_value=ctrl['max'],
-                        default_value=ctrl['value'],
-                        # step=ctrl['step'],
-                        tag=tag_name,
-                        callback=lambda sender, app_data, user_data: self._control_callback(
-                            sender, app_data, user_data
-                        ),
-                        user_data={**ctrl},
-                    )
-                    dpg.bind_item_theme(tag_name, "slider_theme")
-                    self.control_tags.append(tag_name)
-            else:
-                # Create a toggle (checkbox) for controls that only have a default value
-                with dpg.group(label=ctrl['name']):
-                    # tooltip = f" ({ctrl['description']})" if ctrl['description'] else ""
+            ctrl_type = ctrl.get('type', 'unknown')
+            has_range = ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None)
+
+            with dpg.group(horizontal=False):
+                if ctrl_type == 'bool' or (not has_range and ctrl_type != 'menu'):
+                    # Boolean control
                     tag_name = f"{ctrl['name']}_checkbox"
+                    current_value = bool(ctrl.get('value', ctrl.get('default', 0)))
+                    label = ctrl['name']
+                    if 'desc' in ctrl:
+                        label += f" ({ctrl['desc']})"
+
                     dpg.add_checkbox(
-                        label=ctrl['name'],  # + tooltip,
-                        default_value=bool(ctrl['value']),
+                        label=label,
+                        default_value=current_value,
                         tag=tag_name,
                         callback=lambda sender, app_data, user_data: self._control_callback(
                             sender, app_data, user_data
@@ -1074,6 +1073,40 @@ class CameraControlEditor(EditorBase):
                     )
                     dpg.bind_item_theme(tag_name, "checkbox_theme")
                     self.control_tags.append(tag_name)
+
+                elif has_range:
+                    # Numeric control with range
+                    tag_name = f"{ctrl['name']}_slider"
+                    current_value = ctrl.get('value', ctrl.get('default', ctrl['min']))
+                    label = ctrl['name']
+
+                    # Value display text
+                    value_text_tag = f"{ctrl['name']}_value_text"
+                    dpg.add_text(
+                        f"{label}: {current_value} (min={ctrl['min']}, max={ctrl['max']})",
+                        tag=value_text_tag,
+                        color=(200, 200, 200)
+                    )
+
+                    dpg.add_slider_int(
+                        label="",
+                        min_value=ctrl['min'],
+                        max_value=ctrl['max'],
+                        default_value=current_value,
+                        width=-1,
+                        tag=tag_name,
+                        callback=lambda sender, app_data, user_data: self._control_callback(
+                            sender, app_data, user_data
+                        ),
+                        user_data={**ctrl, 'value_text_tag': value_text_tag},
+                    )
+                    dpg.bind_item_theme(tag_name, "slider_theme")
+                    self.control_tags.append(tag_name)
+                    self.control_tags.append(value_text_tag)
+
+                else:
+                    # Menu or unknown type
+                    dpg.add_text(f"{ctrl['name']}: {ctrl.get('value', 'N/A')} [{ctrl_type}]", color=(150, 150, 150))
 
         dpg.add_spacer()
         dpg.add_button(
@@ -1099,7 +1132,14 @@ class CameraControlEditor(EditorBase):
     def enable(self, enabled: bool):
         self.enabled = enabled
         for tag in self.control_tags:
-            dpg.configure_item(tag, enabled=enabled)
+            # Skip text labels (they don't support enabled parameter)
+            if tag.endswith('_value_text'):
+                continue
+            try:
+                dpg.configure_item(tag, enabled=enabled)
+            except (SystemError, KeyError):
+                # Some items don't support enabled parameter, skip them
+                pass
 
     def draw(self):
         # no custom draw required
@@ -1127,6 +1167,15 @@ class CameraControlEditor(EditorBase):
         if isinstance(ctrl_value, bool):
             ctrl_value = 1 if ctrl_value else 0
 
+        # Update value display text if it exists
+        if 'value_text_tag' in user_data:
+            value_text_tag = user_data['value_text_tag']
+            label = user_data['name']
+            ctrl_min = user_data.get('min', 0)
+            ctrl_max = user_data.get('max', 100)
+            dpg.set_value(value_text_tag, f"{label}: {ctrl_value} (min={ctrl_min}, max={ctrl_max})")
+
+        # Apply the control value
         subprocess.run(['v4l2-ctl', '-d', str(self.device_idx), '--set-ctrl', f'{ctrl_name}={ctrl_value}'])
 
     # Refresh values from v4l2 in case of external changes
@@ -1134,18 +1183,36 @@ class CameraControlEditor(EditorBase):
         ctrls = get_controls(self.device_idx)
         # logger.debug(ctrls)
         for name, ctrl in ctrls.items():
-            if ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None):
+            has_range = ('min' in ctrl and ctrl['min'] is not None) and ('max' in ctrl and ctrl['max'] is not None)
+
+            if has_range:
                 tag_name = f"{ctrl['name']}_slider"
+                value_text_tag = f"{ctrl['name']}_value_text"
+
+                # Update slider value
+                ctrl_value = ctrl['value']
+                try:
+                    dpg.set_value(tag_name, ctrl_value)
+                except:
+                    pass
+
+                # Update text label
+                try:
+                    label = ctrl['name']
+                    dpg.set_value(value_text_tag, f"{label}: {ctrl_value} (min={ctrl['min']}, max={ctrl['max']})")
+                except:
+                    pass
             else:
                 tag_name = f"{ctrl['name']}_checkbox"
+                ctrl_value = ctrl['value']
 
-            ctrl_value = ctrl['value']
-            # check the type of the current value to see if we
-            # need to convert to bool.
-            if isinstance(dpg.get_value(tag_name), bool):
-                ctrl_value = True if ctrl_value else False
-
-            dpg.set_value(tag_name, ctrl_value)
+                # Check the type of the current value to see if we need to convert to bool
+                try:
+                    if isinstance(dpg.get_value(tag_name), bool):
+                        ctrl_value = True if ctrl_value else False
+                    dpg.set_value(tag_name, ctrl_value)
+                except:
+                    pass
 
     def _save_to_config_callback(self, sender, app_data):
         ctrls = get_controls(self.device_idx)
@@ -1390,11 +1457,33 @@ class ScreenDetectionEditor(EditorBase):
                     if dpg.does_item_exist(corner_tag):
                         dpg.delete_item(corner_tag)
 
+                    # Delete corner index labels
+                    corner_idx_tag = f"tag_{i}_corner_{t}_idx"
+                    if dpg.does_item_exist(corner_idx_tag):
+                        dpg.delete_item(corner_idx_tag)
+
                 id_tag = f"tag_{i}_id"
                 if dpg.does_item_exist(id_tag):
                     dpg.delete_item(id_tag)
 
+                # Delete rectification corner markers
+                rect_corner_tag = f"tag_{i}_rect_corner"
+                if dpg.does_item_exist(rect_corner_tag):
+                    dpg.delete_item(rect_corner_tag)
+
             if self.curr_tags is not None:
+                # Load corner indices used for rectification from config
+                with open(self.detection_config) as df:
+                    detection_data = json.load(df)
+                corner_mapping = detection_data.get("corners", {})
+                # Map tag_id to corner_idx: {0: 0, 1: 1, 2: 2, 3: 3}
+                tag_corner_indices = {
+                    0: corner_mapping.get("TAG_ID_TOP_LEFT", None),
+                    1: corner_mapping.get("TAG_ID_TOP_RIGHT", None),
+                    2: corner_mapping.get("TAG_ID_BOTTOM_RIGHT", None),
+                    3: corner_mapping.get("TAG_ID_BOTTOM_LEFT", None),
+                }
+
                 for i, (tag_id, corners) in enumerate(self.curr_tags.items()):
                     # corners are in camera space, scale to display resolution
                     corners = self._camera_to_gui(corners, self.scale[0], self.scale[1])
@@ -1412,6 +1501,18 @@ class ScreenDetectionEditor(EditorBase):
                         )
                         center_x += corners[idx][0]
                         center_y += corners[idx][1]
+
+                        # Draw corner index label (c0, c1, c2, c3)
+                        corner_pos = corners[idx]
+                        dpg.draw_text(
+                            (corner_pos[0] - 10, corner_pos[1] - 10),
+                            f"c{idx}",
+                            color=(255, 255, 0),  # Yellow text
+                            size=15,
+                            parent=self.draw_list,
+                            tag=f"tag_{i}_corner_{idx}_idx",
+                        )
+
                     center_x /= num_corners
                     center_y /= num_corners
                     dpg.draw_text(
@@ -1422,6 +1523,20 @@ class ScreenDetectionEditor(EditorBase):
                         parent=self.draw_list,
                         tag=f"tag_{i}_id",
                     )
+
+                    # Draw a circle on the corner used for rectification
+                    rect_corner_idx = tag_corner_indices.get(tag_id, 0)
+                    if rect_corner_idx < len(corners):
+                        rect_corner_pos = corners[rect_corner_idx]
+                        dpg.draw_circle(
+                            center=rect_corner_pos,
+                            radius=8,
+                            color=(255, 255, 0),  # Yellow outline
+                            fill=(255, 0, 0),      # Red fill
+                            thickness=2,
+                            parent=self.draw_list,
+                            tag=f"tag_{i}_rect_corner",
+                        )
 
             self.tags_require_update = False
 
@@ -2758,6 +2873,7 @@ class PhysicalGui:
             )
             dpg.configure_item("rect_mode_detail", color=(200, 200, 200))
 
+
     def scale_rect_frame(self, new_scale):
         self.rect_frame_scale = new_scale
         if self.score_detection_editor is not None:
@@ -2827,7 +2943,7 @@ class PhysicalGui:
                 # logger.debug(val.shape)
                 if self.display_cam_dims[0] != cam_frame.shape[1] or self.display_cam_dims[1] != cam_frame.shape[0]:
                     cam_frame = cv2.resize(cam_frame, self.display_cam_dims, interpolation=cv2.INTER_LINEAR)
-                cam_frame_fp32 = np.clip(cam_frame[:, :, ::-1].astype(np.float32) * (1.0 / 255.0), 0.0, 1.0)
+                cam_frame_fp32 = np.clip(cam_frame.astype(np.float32) * (1.0 / 255.0), 0.0, 1.0)
                 cam_frame_needs_update = True
                 # logger.debug(f'cam: {(time.time()-start) * 1000.0:.2f}')
 
@@ -2910,10 +3026,12 @@ class PhysicalGui:
                 self.reset_per_run_graphs = False
 
             cam_frame_dirty = False
+
             if self.screen_detection_editor is not None:
-                cam_frame_fp32, cam_frame_dirty = self.screen_detection_editor.compute_overlay(
+                cam_frame_fp32, cam_frame_dirty_editor = self.screen_detection_editor.compute_overlay(
                     cam_frame_fp32, alpha=0.4
                 )
+                cam_frame_dirty = cam_frame_dirty or cam_frame_dirty_editor
 
             if cam_frame_needs_update or cam_frame_dirty:
                 dpg.set_value("camera_texture", np.ascontiguousarray(cam_frame_fp32))
