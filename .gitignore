@@ -27,3 +27,5 @@ local/
 train_data/
 wandb/
 videos/
+
+**/.DS_Store
