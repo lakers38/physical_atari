@@ -165,6 +165,34 @@ Modern systems often default to power-saving configurations that can cause unexp
 
 ---
 
+## Distributed MEME Training (experimental)
+
+`train_meme_distributed.py` launches a multiprocessing version of the MEME agent with separate **actors**, a **central replay server**, and a **learner**:
+
+- Actors run latency-wrapped environments plus `VectorMEMEAgent` in inference-only mode and push finished episodes to the replay server.
+- The replay process owns `PrioritisedSequenceReplay`, chunks incoming episodes, and serves prioritized batches back to the learner while consuming priority updates.
+- The learner consumes replay batches, runs the usual MEME gradient step, and periodically publishes EMA network weights for actors to pull.
+
+Example command (four actors × four envs each, 5M global frames):
+
+```bash
+python3 train_meme_distributed.py \
+  --rom MsPacman \
+  --num_actors 4 \
+  --envs_per_actor 4 \
+  --total_frames 5000000 \
+  --latency_weights latency_wrap \
+  --results_dir results/meme_distributed \
+  --weights_dir results/meme_distributed/weights \
+  --replay_capacity 20000 \
+  --batch_size 64 \
+  --learner_publish_interval 200
+```
+
+Run it inside the project container so every process shares the same filesystem, camera, and GPU access. Actor logs are written under `results/meme_distributed/actor_*`, while learner checkpoints and metrics land in `results/meme_distributed/learner`.
+
+---
+
 ## License
 
 This project is licensed under the Apache 2.0 License.

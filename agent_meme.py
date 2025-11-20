@@ -16,7 +16,7 @@ import os
 import random
 import warnings
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Protocol
 
 import contextlib
 import numpy as np
@@ -453,6 +453,14 @@ class PrioritisedSequenceReplay:
             self.priorities[idx] = float(priority)
 
 
+class ReplayBufferProtocol(Protocol):
+    def add_episode(self, episode: List[Transition]) -> None: ...
+
+    def sample(self, batch_size: int): ...
+
+    def update_priorities(self, indices: Iterable[int], priorities: torch.Tensor) -> None: ...
+
+
 # -----------------------------------------------------------------------------#
 # MEME network with LSTM
 # -----------------------------------------------------------------------------#
@@ -674,6 +682,7 @@ class MEMECore:
         meta_epsilon: float = 0.5,
         ema_decay: float = 0.995,
         data_dir: Optional[str] = None,
+        replay: Optional[ReplayBufferProtocol] = None,
         load_file: Optional[str] = None,
         gpu: int = 0,
         train_micro_batch: Optional[int] = None,
@@ -727,7 +736,7 @@ class MEMECore:
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
-        if torch.cuda.is_available():
+        if gpu >= 0 and torch.cuda.is_available():
             self.device = torch.device(f'cuda:{gpu}')
             torch.cuda.manual_seed_all(seed)
         elif torch.backends.mps.is_available():
@@ -781,16 +790,19 @@ class MEMECore:
             weight_decay=0.05,
         )
 
-        self.replay = PrioritisedSequenceReplay(
-            capacity=buffer_capacity,
-            seq_len=seq_len,
-            burn_in=burn_in,
-            stack_size=stack_size,
-            obs_shape=(obs_height, obs_width),
-            alpha=priority_alpha,
-            beta_start=priority_beta,
-            beta_increment=priority_beta_increment,
-        )
+        if replay is not None:
+            self.replay = replay
+        else:
+            self.replay = PrioritisedSequenceReplay(
+                capacity=buffer_capacity,
+                seq_len=seq_len,
+                burn_in=burn_in,
+                stack_size=stack_size,
+                obs_shape=(obs_height, obs_width),
+                alpha=priority_alpha,
+                beta_start=priority_beta,
+                beta_increment=priority_beta_increment,
+            )
 
         self.rnd = RNDModule((stack_size, obs_height, obs_width), embedding_dim=rnd_embedding).to(self.device)
         self.embedding_head = nn.Sequential(

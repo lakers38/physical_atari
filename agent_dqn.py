@@ -14,25 +14,42 @@ from collections import deque
 from agent_utils import preprocess_batch
 from vector_agents import VectorAgent
 
-
+# Defines QNetwork class that inherits from nn.Module
 class QNetwork(nn.Module):
+    # Initializes class
+    # Need in_channels for the CNN to know how many input nodes to have
+    # Need num_actions for the output fully connected layer to know the output size (Q-value for each action) 
     def __init__(self, in_channels: int, num_actions: int):
+        # runs base class constructor to initialize different book-keeping done inside of nn.Module (OrderedDict for
+        # parameters, buffers, hooks)
         super().__init__()
+        # defines first convolutional layer in the network
         self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
+        # defines second convolutional layer in the network
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        # defines third convolutional layer in the network
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        # first fully connected layer
         self.fc1 = nn.Linear(64 * 7 * 7, 512)
+        # second fully connected layer
         self.fc2 = nn.Linear(512, num_actions)
 
+    # Forward pass for the model
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # pass in input to first convolutional layer
         x = F.relu(self.conv1(x))
+        # apply relu to output of second CNN
         x = F.relu(self.conv2(x))
+        # apply relu to output of third CNN
         x = F.relu(self.conv3(x))
+        # takes the input with size (batch, channels, H, W) and resizes into (batch, channels*height*width)
         x = x.view(x.size(0), -1)
+        # passes resized input into fully connected layer and applies ReLU
         x = F.relu(self.fc1(x))
+        # final output given by last fully connected layer
         return self.fc2(x)
 
-
+# 
 class ReplayBuffer:
     def __init__(self, capacity: int, stack_size: int, obs_shape: tuple[int, int]):
         self.capacity = capacity
