@@ -46,5 +46,5 @@ docker run --rm -it \
   --ulimit=stack=67108864 \
   --cap-add=SYS_PTRACE \
   --volume=/tmp/.X11-unix:/tmp/.X11-unix \
-  -v /home/adam/.Xauthority:/root/.Xauthority \
+  -v ~/.Xauthority:/root/.Xauthority \
   "$DOCKER_IMAGE_NAME"
