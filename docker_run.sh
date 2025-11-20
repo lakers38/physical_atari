@@ -37,7 +37,7 @@ docker run --rm -it \
   -w "$MOUNT_POINT" \
   --mount source=/dev,target=/dev,type=bind \
   -e DISPLAY=$DISPLAY \
-  -e XAUTHORITY=/tmp/.Xauthority \
+  -e XAUTHORITY=/root/.Xauthority \
   --gpus=all \
   --privileged \
   --network=host \
@@ -46,5 +46,5 @@ docker run --rm -it \
   --ulimit=stack=67108864 \
   --cap-add=SYS_PTRACE \
   --volume=/tmp/.X11-unix:/tmp/.X11-unix \
-  --volume=$XAUTHORITY:/tmp/.Xauthority \
+  -v ~/.Xauthority:/root/.Xauthority \
   "$DOCKER_IMAGE_NAME"

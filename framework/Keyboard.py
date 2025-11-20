@@ -16,6 +16,7 @@ import queue
 import threading
 import time
 from enum import Enum
+from typing import Optional
 
 from pynput.keyboard import Key, Listener
 
@@ -93,7 +94,7 @@ class Keyboard:
         self.device.shutdown()
         self.device = None
 
-    def _parse_key(self, key) -> str | None:
+    def _parse_key(self, key) -> Optional[str]: # type: ignore
         if key == Key.space:
             return ' '
         try:

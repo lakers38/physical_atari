@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/pytorch:24.11-py3
+FROM nvcr.io/nvidia/pytorch:25.01-py3
 
 # https://github.com/openucx/ucc/issues/476 - 'ImportError: /opt/hpcx/ucx/lib/libucs.so.0: undefined symbol: ucm_set_global_opts'
 # Workaround: Error happens because compiler picks up libucm required by libucs from a different directory,
@@ -11,7 +11,6 @@ ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 WORKDIR /workspaces
 
-COPY requirements.txt /workspaces/requirements.txt
 
 # NOTE: Added libgl1 for cv2 'ImportError: libGL.so.1: cannot open shared object file: No such file or directory'
 # libxkbfile1 is neeed for nsys-ui
@@ -38,6 +37,7 @@ RUN python -m pip install --upgrade pip
 # imshow will fail with 'error: (-2:Unspecified error) The function is not implemented. Rebuild the library with ...'
 RUN pip uninstall --yes opencv
 
+COPY requirements.txt /workspaces/requirements.txt
 RUN pip install -r requirements.txt
 
 #----------------------

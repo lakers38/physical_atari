@@ -103,7 +103,7 @@ def get_positions_from_action_mapping() -> dict[Action, tuple[int, ...]]:
 
 
 class RoboTroller(ControlDevice):
-    def __init__(self, model_name, vendor_id, product_id, port_name, baud_rate=15200, current_limit=200):
+    def __init__(self, model_name, vendor_id, product_id, port_name, baud_rate=15200, current_limit=300):
         super().__init__()
         self.vendor_id = vendor_id
         self.product_id = product_id

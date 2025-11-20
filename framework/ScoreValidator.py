@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections import defaultdict, deque
-
+from typing import Optional
 import numpy as np
 
 from framework.Logger import logger
@@ -366,7 +366,7 @@ class ScoreValidator:
 
         return True
 
-    def validate(self, pred_score, score_confidence, pred_lives=None, lives_confidences=None) -> tuple[int, int | None]:
+    def validate(self, pred_score, score_confidence, pred_lives=None, lives_confidences=None) -> tuple[int, Optional[int]]:
         self.frame_id += 1
 
         lives_valid = self._is_lives_valid(pred_lives, lives_confidences)
