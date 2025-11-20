@@ -19,6 +19,8 @@ pip-delete-this-directory.txt
 # VS Code / PyCharm / JetBrains
 .vscode/
 .idea/
+AGENTS.md
+CLAUDE.md
 
 # training artifacts
 .setup.cfg.json
@@ -27,5 +29,10 @@ local/
 train_data/
 wandb/
 videos/
+outputs/
+results_sim/
+ppo_outputs/
+*.zip
 
 **/.DS_Store
+**outputs**/

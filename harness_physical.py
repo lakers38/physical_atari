@@ -24,6 +24,12 @@ import numpy as np
 import torch
 from PIL import Image
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 from framework.Logger import add_file_handler_to_logger, logger
 
 
@@ -31,7 +37,8 @@ def main(args):
     logger.setLevel(getattr(logging, args.log_level))
 
     experiment_name = os.path.splitext(os.path.basename(args.game_config))[0]
-    experiment_name = f"{experiment_name}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    experiment_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    experiment_name = f"{experiment_name}_{experiment_timestamp}"
     data_dir = os.path.join(args.results_dir, experiment_name)
     os.makedirs(data_dir, exist_ok=True)
 
@@ -46,6 +53,8 @@ def main(args):
         from agent_rainbow import Agent
     elif args.agent_type == 'agent_random':
         from agent_random import Agent
+    elif args.agent_type == 'agent_ppo':
+        from algorithms.ppo.agent_ppo import Agent
     else:
         raise ValueError(f"Invalid agent type={args.agent_type}")
 
@@ -136,8 +145,13 @@ def main(args):
 
         load_model = None
         if args.load_model is not None:
+            # Check if the model file exists (with or without .zip extension for SB3 models)
             if os.path.exists(args.load_model):
                 load_model = args.load_model
+            elif os.path.exists(args.load_model + '.zip'):
+                load_model = args.load_model
+            elif os.path.exists(args.load_model.replace('.zip', '')):
+                load_model = args.load_model.replace('.zip', '')
             else:
                 logger.warning(f"Could not find model checkpoint: {args.load_model}")
 
@@ -169,9 +183,31 @@ def main(args):
 
                 game = env.get_name()
                 action_set = env.get_action_set()
+                action_names = [a.name for a in action_set]
 
                 num_actions = len(action_set)
                 logger.debug(f'{num_actions} actions: {action_set}')
+
+                # Initialize wandb if requested (must be before agent creation)
+                if args.wandb and WANDB_AVAILABLE:
+                    game_name = os.path.splitext(os.path.basename(args.game_config))[0]
+                    # Use experiment directory (second-to-last in run path) to avoid long names
+                    run_name_suffix = os.path.basename(os.path.dirname(run_dir))
+                    wandb.init(
+                        project="physical-atari",
+                        name=f"{experiment_timestamp}-{args.agent_type}-real",
+                        config={
+                            "agent_type": args.agent_type,
+                            "game": game_name,
+                            "total_frames": total_frames,
+                            "seed": seed,
+                            "reduce_action_set": args.reduce_action_set,
+                            "lives_as_episodes": lives_as_episodes
+                        }
+                    )
+                    logger.info("harness: Wandb logging enabled for all metrics")
+                elif args.wandb and not WANDB_AVAILABLE:
+                    logger.warning("harness: Wandb requested but not installed. Run: pip install wandb")
 
                 # Init a fresh model.
                 if args.agent_type == 'agent_delay_target':
@@ -221,6 +257,10 @@ def main(args):
                         "epsilon_start": 0.0,
                         "epsilon_end": 0.0,
                     }
+                elif args.agent_type == 'agent_ppo':
+                    agent_args = {
+                        "use_wandb": args.wandb
+                    }
                 else:
                     agent_args = {"gpu": args.gpu}
                 if load_model is not None:
@@ -263,6 +303,11 @@ def main(args):
                     )
 
                 logger.info("Starting Training")
+
+                # Track metrics for wandb logging
+                action_counts = np.zeros(num_actions)  # Track action distribution
+                current_episode_reward = 0
+                current_episode_length = 0
 
                 if args.capture_frames:
                     # raw filename expect format: name_{w}x{h}.{y or rgb}
@@ -397,6 +442,55 @@ def main(args):
                     torch.cuda.nvtx.range_push("agent.frame")
                     taken_action = agent.frame(observation_rgb8, reward, end_of_episode)
                     torch.cuda.nvtx.range_pop()
+
+                    # Track action distribution and episode metrics for wandb
+                    action_counts[taken_action] += 1
+                    current_episode_reward += reward
+                    current_episode_length += 1
+
+                    # Log to wandb on episode end
+                    if end_of_episode > 1 and args.wandb and WANDB_AVAILABLE:
+                        avg_score = episode_avg if episode_avg != -999 else 0
+                        avg_reward = avg_score  # rewards and scores are equivalent in this harness
+                        wandb.log({
+                            "episode/reward": current_episode_reward,
+                            "episode/length": current_episode_length,
+                            "episode/score": info["score"],
+                            "episode/lives": env.lives(),
+                            "episode/avg_score": avg_score,
+                            "episode/number": len(episode_scores),
+                            # Additional wandb metrics
+                            "episode/current_score": info["score"],
+                            "episode/average_score": avg_score,
+                            "episode/current_reward": current_episode_reward,
+                            "episode/average_reward": avg_reward,
+                        }, step=u)
+                        # Reset episode tracking
+                        current_episode_reward = 0
+                        current_episode_length = 0
+
+                    # Periodically log action distribution and FPS
+                    if u % 100 == 0 and args.wandb and WANDB_AVAILABLE:
+                        # Log action distribution (percentage of each action) with names
+                        action_distribution = action_counts / (action_counts.sum() + 1e-8)
+                        action_log = {
+                            f"actions/{action_names[i]}": action_distribution[i] for i in range(num_actions)
+                        }
+                        # Current action as both index and label for easier charting
+                        action_log["actions/current_action_index"] = taken_action
+                        action_log["actions/current_action_label"] = action_names[taken_action]
+                        action_log["performance/fps"] = fps
+                        action_log["performance/frame"] = u
+                        # Surface live score/reward metrics frequently for dashboards
+                        avg_score = episode_avg if episode_avg != -999 else 0
+                        avg_reward = avg_score
+                        action_log.update({
+                            "live/current_score": info["score"],
+                            "live/average_score": avg_score,
+                            "live/current_reward": current_episode_reward,
+                            "live/average_reward": avg_reward,
+                        })
+                        wandb.log(action_log, step=u)
 
                     if fps_frames == target_fps:
                         elapsed_time = time.time() - fps_start_time
@@ -535,7 +629,7 @@ def get_argument_parser():
         '--agent_type',
         type=str,
         default="agent_delay_target",
-        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_rainbow"],
+        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_rainbow", "agent_ppo"],
     )
     parser.add_argument(
         '--reduce_action_set',
@@ -588,6 +682,21 @@ def get_argument_parser():
     parser.add_argument('--rainbow_priority_beta', type=float, default=0.4)
     parser.add_argument('--rainbow_priority_beta_increment', type=float, default=1e-6)
     parser.add_argument('--rainbow_priority_eps', type=float, default=1e-6)
+
+    # PPO-specific configuration
+    # parser.add_argument('--ppo_learning_rate', type=float, default=2.5e-4)
+    # parser.add_argument('--ppo_n_steps', type=int, default=256)
+    # parser.add_argument('--ppo_batch_size', type=int, default=128)
+    # parser.add_argument('--ppo_n_epochs', type=int, default=10)
+    # parser.add_argument('--ppo_gamma', type=float, default=0.99)
+    # parser.add_argument('--ppo_gae_lambda', type=float, default=0.95)
+    # parser.add_argument('--ppo_clip_range', type=float, default=0.1)
+    # parser.add_argument('--ppo_ent_coef', type=float, default=0.01)
+    # parser.add_argument('--ppo_vf_coef', type=float, default=0.5)
+    # parser.add_argument('--ppo_max_grad_norm', type=float, default=0.5)
+    # parser.add_argument('--ppo_frame_skip', type=int, default=4)
+    parser.add_argument('--wandb', action='store_true', default=False,
+                        help='Enable wandb logging for all metrics (training, episodes, rewards, FPS, actions)')
 
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--load_model', type=str, default=None)
