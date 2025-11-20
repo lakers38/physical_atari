@@ -49,88 +49,122 @@ class QNetwork(nn.Module):
         # final output given by last fully connected layer
         return self.fc2(x)
 
-# 
+# Replay buffer class that stores experience data to sample from
 class ReplayBuffer:
+    # Initializes replay buffer with specified capactiy, stack size (put together multiple frames as a replay experience to capture dynamics), 
+    # obs_shape defines the size of the experiences stored in the buffer
     def __init__(self, capacity: int, stack_size: int, obs_shape: tuple[int, int]):
+        # sets capacity for the buffer
         self.capacity = capacity
+        # sets stack_size for the buffer
         self.stack_size = stack_size
+        # sets expected obs_shape for the experiences
         self.obs_shape = obs_shape
+        # create numpy state array to store states
         self.states = np.zeros((capacity, stack_size, *obs_shape), dtype=np.uint8)
+        # create numpy next_state array to store the next state reached from the current state
         self.next_states = np.zeros((capacity, stack_size, *obs_shape), dtype=np.uint8)
+        # create numpy action array, stores action taken at each state for each experience
         self.actions = np.zeros(capacity, dtype=np.int64)
+        # the assigned reward for each experience 
         self.rewards = np.zeros(capacity, dtype=np.int64)
+        # numpy array specifying if each state for experiences 
         self.dones = np.zeros(capacity, dtype=np.bool_)
+        # ptr keeps track of where we are in the buffer
         self.ptr = 0
+        # tracks if the buffer is full, if it is then we return capacity for the size of the buffer
+        # as opposed to the ptr
         self.full = False
 
+    # allows this method to be an attribute on self (you can call buffer.size)
     @property
     def size(self) -> int:
         return self.capacity if self.full else self.ptr
 
+    # adds sample (state, action, reward, next_state, done) to the buffer 
     def add(self, state, action, reward, next_state, done) -> None:
+        # set the specific point in buffer to be the state that was just observed
         self.states[self.ptr] = state
+        # set the next_state that was reached in this observation
         self.next_states[self.ptr] = next_state
+        # set the action that was taken for this experience
         self.actions[self.ptr] = action
+        # set the reward that was gained for this experience
         self.rewards[self.ptr] = reward
+        # set the done state for this experience (whether the state observed was terminal or not)
         self.dones[self.ptr] = done
+        # update pointer, we do mod capacity because we want the ptr value 
+        # to be constrained to be at most the capacity value
         self.ptr = (self.ptr + 1) % self.capacity
+        # once ptr has gotten to zero it means that it has reached capacity
+        # so we set the buffer being full to true
         if self.ptr == 0:
             self.full = True
-
+    # sample experience data from the buffer by batch and also put it on the same device used for training
     def sample(self, batch_size: int, device: torch.device):
+        # set random index to use for sampling
         idx = np.random.randint(0, self.size, size=batch_size)
+        # sample experience state, change from numpy array to normalized torch tensor on device used for
+        # training, with the appropriate dtype
         states = torch.from_numpy(self.states[idx]).to(device, dtype=torch.float32) / 255.0
+        # sample experience action, change from numpy array to torch tensor on device used for
+        # training, with the appropriate dtype
         actions = torch.from_numpy(self.actions[idx]).to(device, dtype=torch.int64)
+        # sample experience reward, change from numpy array to torch tensor on device used for
+        # training, with the appropriate dtype
         rewards = torch.from_numpy(self.rewards[idx]).to(device, dtype=torch.float32)
+        # sample experience next state, change from numpy array to normalized torch tensor on device used for
+        # training, with the appropriate dtype
         next_states = torch.from_numpy(self.next_states[idx]).to(device, dtype=torch.float32) / 255.0
+        # sample experience done state, change from numpy array to torch tensor
+        # on device used for training, with appropriate dtype
         dones = torch.from_numpy(self.dones[idx].astype(np.float32)).to(device, dtype=torch.float32)
+        # return experience data
         return states, actions, rewards, next_states, dones
 
-
+# Defines DQNCoreClass that instatiates buffer, Q-Networks, and ReplayBuffer
 class DQNCore:
+    # initialization method for the class
     def __init__(
         self,
-        num_envs: int,
-        seed: int,
-        num_actions: int,
-        total_frames: int,
-        *,
-        stack_size: int = 4,
-        obs_height: int = 84,
-        obs_width: int = 84,
-        buffer_size: int = 100_000,
-        batch_size: int = 32,
-        learning_rate: float = 2.5e-4,
-        gamma: float = 0.99,
-        train_start: int = 50_000,
-        train_freq: int = 4,
-        target_update_freq: int = 10_000,
-        epsilon_start: float = 1.0,
-        epsilon_end: float = 0.1,
-        epsilon_decay_frames: int = 1_000_000,
-        frame_skip: int = 1,
-        grad_clip: Optional[float] = 10.0,
-        data_dir: Optional[str] = None,
-        load_file: Optional[str] = None,
-        gpu: int = 0,
+        num_envs: int, # number of environments to be training at one time
+        seed: int, # seed to use for random number generators
+        num_actions: int, # the number of actions available in the action space
+        total_frames: int, # total_frames to train for 
+        *, # in python this separate positional args from keyword args
+        stack_size: int = 4, # stack_size argument for how many frames we stack together
+        obs_height: int = 84, # height of the observation frames
+        obs_width: int = 84, # width of the observation frames 
+        buffer_size: int = 100_000, # how big the buffer will be (max number of experiences it'll hold)
+        batch_size: int = 32, # batch size used for training
+        learning_rate: float = 2.5e-4, # learning rate used for training
+        gamma: float = 0.99, # discount factor for returns
+        train_start: int = 50_000, # training starts after this many experiences are in the buffer
+        train_freq: int = 4, # we train the network every train_freq number of steps
+        target_update_freq: int = 10_000, # we copy over the network's weights every target_update_freq number of steps
+        epsilon_start: float = 1.0, # this is the start value for epsilon used for epsilon-greedy
+        epsilon_end: float = 0.1, # this is the end value epsilon is decayed to
+        epsilon_decay_frames: int = 1_000_000, # this is how many frames over which we decay (why can't this just be total_frames?)
+        grad_clip: Optional[float] = 10.0, # this is the value we clip the gradients to
+        load_file: Optional[str] = None, # if we want resume training from a previous model
+        gpu: int = 0, # which gpu we use to train
     ):
-        self.num_envs = num_envs
-        self.num_actions = num_actions
-        self.total_frames = total_frames
-        self.stack_size = stack_size
-        self.obs_height = obs_height
-        self.obs_width = obs_width
-        self.buffer_size = buffer_size
-        self.batch_size = batch_size
-        self.learning_rate = learning_rate
-        self.gamma = gamma
-        self.train_start = train_start
-        self.train_freq = train_freq
+        self.num_envs = num_envs # sets the number of environments we use to train
+        self.num_actions = num_actions # the number of actions in the game's action space
+        self.total_frames = total_frames # total number of frames for training
+        self.stack_size = stack_size #  the number of frames we stack together for each observation
+        self.obs_height = obs_height # observation height
+        self.obs_width = obs_width # observation width
+        self.buffer_size = buffer_size # buffer size for replay buffer
+        self.batch_size = batch_size # batch size for training 
+        self.learning_rate = learning_rate # learning rate for training
+        self.gamma = gamma # gamma used as discount factor
+        self.train_start = train_start # at what step we start training 
+        self.train_freq = train_freq # how often training happens
         self.target_update_freq = target_update_freq
         self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay_frames = epsilon_decay_frames
-        self.frame_skip = frame_skip
         self.grad_clip = grad_clip
 
         if torch.cuda.is_available():
@@ -160,7 +194,6 @@ class DQNCore:
         self.last_avg_q = 0.0
         self.last_max_q = 0.0
 
-        self.data_dir = data_dir or os.getcwd()
 
         if load_file is not None and os.path.exists(load_file):
             self.load_model(load_file)
@@ -267,9 +300,9 @@ class DQNCore:
 
 
 class Agent:
-    def __init__(self, data_dir=None, seed=0, num_actions=18, total_frames=1_000_000, **kwargs):
+    def __init__(self, seed=0, num_actions=18, total_frames=1_000_000, **kwargs):
         self.core = DQNCore(
-            num_envs=1, data_dir=data_dir, seed=seed, num_actions=num_actions, total_frames=total_frames, **kwargs
+            num_envs=1, seed=seed, num_actions=num_actions, total_frames=total_frames, **kwargs
         )
         self.prev_obs: Optional[np.ndarray] = None
         self.prev_reward = 0.0
@@ -310,7 +343,6 @@ class VectorDQNAgent(VectorAgent):
         num_envs: int,
         seed: int,
         num_actions: int,
-        results_dir: Optional[str] = None,
         total_frames: int = 1_000_000,
         **kwargs,
     ):
@@ -319,7 +351,6 @@ class VectorDQNAgent(VectorAgent):
             seed=seed,
             num_actions=num_actions,
             total_frames=total_frames,
-            data_dir=results_dir,
             **kwargs,
         )
         self.num_envs = num_envs
