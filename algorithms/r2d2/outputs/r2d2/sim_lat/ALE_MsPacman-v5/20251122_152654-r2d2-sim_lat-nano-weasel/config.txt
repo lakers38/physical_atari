@@ -1,0 +1,17 @@
+Run name: 20251122_152654-r2d2-sim_lat-nano-weasel
+Algorithm: R2D2 (distributed multi-actor)
+Training mode: sim_lat
+Environment: ALE/MsPacman-v5
+Total timesteps: 10000000
+Number of actors: 8
+Device: cuda
+Seed: 0
+Latency simulation: True
+Latency model directory: ../../latency_wrap
+Learning rate: 0.001
+Gamma: 0.997
+Batch size: 64
+Buffer capacity: 250000
+Learning starts: 50000
+Base epsilon: 0.6
+Alpha (epsilon schedule): 7

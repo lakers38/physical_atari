@@ -6,10 +6,8 @@ import time
 from collections import deque
 from typing import Deque, Dict, Iterable, List, Optional, Tuple
 
-from mpmath.libmp.libelefun import atan_taylor_get_cached
 import numpy as np
 import torch
-from torch._inductor.ir import NoneAsConstantBuffer
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -182,7 +180,7 @@ class PrioritizedReplay:
 
 
 class RainbowNetwork(nn.Module):
-    def __init__(self, in_channels: int, num_actions: int, num_atoms: int):
+    def __init__(self, in_channels: int, num_actions: int, num_atoms: int, obs_height: int, obs_width: int):
         super().__init__()
         self.num_actions = num_actions
         self.num_atoms = num_atoms
@@ -196,7 +194,8 @@ class RainbowNetwork(nn.Module):
             nn.ReLU(),
         )
 
-        self.fc_input_dim = 64 * 7 * 7
+        conv_out_h, conv_out_w = self._conv_output_shape(in_channels, obs_height, obs_width)
+        self.fc_input_dim = 64 * conv_out_h * conv_out_w
 
         self.value_stream = nn.Sequential(NoisyLinear(self.fc_input_dim, 512), nn.ReLU(), NoisyLinear(512, num_atoms))
         self.adv_stream = nn.Sequential(
@@ -224,6 +223,13 @@ class RainbowNetwork(nn.Module):
     def q_values(self, x, support):
         probs, _ = self.forward(x)
         return torch.sum(probs * support.view(1, 1, -1), dim=2)
+
+    def _conv_output_shape(self, in_channels: int, height: int, width: int) -> Tuple[int, int]:
+        """Compute post-conv spatial dims for arbitrary input shapes."""
+        with torch.no_grad():
+            dummy = torch.zeros(1, in_channels, height, width)
+            out = self.conv(dummy)
+        return out.shape[2], out.shape[3]
 
 
 class RainbowCore:
@@ -296,10 +302,22 @@ class RainbowCore:
         else:
             self.device = torch.device('cpu')
 
-        self.network = RainbowNetwork(stack_size, num_actions, num_atoms).to(self.device)
-        self.target_network = RainbowNetwork(stack_size, num_actions, num_atoms).to(self.device)
+        self.network = RainbowNetwork(stack_size, num_actions, num_atoms, obs_height, obs_width).to(self.device)
+        self.target_network = RainbowNetwork(stack_size, num_actions, num_atoms, obs_height, obs_width).to(self.device)
         self.target_network.load_state_dict(self.network.state_dict())
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
+
+        # Warn about memory footprint early so large 128x128x16 configs don't OOM.
+        bytes_per_transition = stack_size * obs_height * obs_width  # uint8 per pixel
+        est_bytes = bytes_per_transition * buffer_size * 2  # states + next_states
+        if est_bytes > 8 * (1024**3):
+            est_gb = est_bytes / float(1024**3)
+            print(
+                f"[Rainbow] Replay buffer will allocate ~{est_gb:.1f} GiB (stack={stack_size}, "
+                f"res={obs_height}x{obs_width}, capacity={buffer_size}). "
+                "Consider lowering rainbow_buffer_size for larger inputs."
+            )
+
         self.replay = PrioritizedReplay(
             capacity=buffer_size,
             stack_size=stack_size,
