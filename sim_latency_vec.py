@@ -127,6 +127,10 @@ class VectorLatencyWrapper:
         else:
             self._action_map = base_action_set
         self._reverse_map = {ale_action: idx for idx, ale_action in enumerate(self._action_map)}
+        max_action_id = int(self._action_map.max()) + 1
+        self._reverse_map_arr = np.full((max_action_id,), -1, dtype=np.int64)
+        for idx, ale_action in enumerate(self._action_map):
+            self._reverse_map_arr[int(ale_action)] = idx
         self.action_space = spaces.Discrete(len(self._action_map))
         self.single_action_space = self.action_space
 
@@ -140,11 +144,14 @@ class VectorLatencyWrapper:
             self.pred_weight = model.pred_weight
             self.pred_bias = model.pred_bias
             self.action_queue = np.zeros((self.num_envs, 30, 36), dtype=np.float32)
+            self.action_queue_flat = self.action_queue.reshape(self.num_envs, -1)
             noop_vec = np.zeros((36,), dtype=np.float32)
             noop_vec[0] = 1.0
             noop_vec[18] = 1.0
             self.action_queue[:] = noop_vec
             self.last_action = np.zeros((self.num_envs,), dtype=np.int64)
+            self.hot = np.zeros((self.num_envs, 36), dtype=np.float32)
+            self.delayed_actions = np.zeros((self.num_envs,), dtype=np.int64)
 
     def reset(self):
         return self.venv.reset()
@@ -157,20 +164,26 @@ class VectorLatencyWrapper:
         if self.latency_enabled:
             # Shift queues and insert new one-hots
             self.action_queue[:, :-1, :] = self.action_queue[:, 1:, :]
-            hot = np.zeros((self.num_envs, 36), dtype=np.float32)
+            hot = self.hot
+            hot.fill(0.0)
             hot[np.arange(self.num_envs), ale_actions] = 1.0
             hot[np.arange(self.num_envs), 18 + self.last_action] = 1.0
             self.action_queue[:, -1, :] = hot
 
-            rep = self.action_queue.reshape(self.num_envs, -1)
-            logits = rep @ self.fc_weight.T + self.fc_bias
+            logits = self.action_queue_flat @ self.fc_weight.T + self.fc_bias
             logits = np.maximum(logits, 0.0)
             logits = logits @ self.pred_weight.T + self.pred_bias
             delayed_ale = np.argmax(logits, axis=1).astype(np.int64)
             self.last_action = delayed_ale
-            delayed_actions = np.array([self._reverse_map.get(int(a), int(actions[i])) for i, a in enumerate(delayed_ale)], dtype=np.int64)
+            delayed_actions = self.delayed_actions
+            delayed_actions[:] = actions
+            valid_mask = delayed_ale < self._reverse_map_arr.shape[0]
+            mapped = np.full_like(delayed_ale, -1)
+            mapped[valid_mask] = self._reverse_map_arr[delayed_ale[valid_mask]]
+            apply_mask = mapped >= 0
+            delayed_actions[apply_mask] = mapped[apply_mask]
         else:
-            delayed_actions = np.array([self._reverse_map.get(int(a), int(act)) for a, act in zip(ale_actions, actions)], dtype=np.int64)
+            delayed_actions = actions
 
         total_reward = np.zeros((self.num_envs,), dtype=np.float32)
         terminated = np.zeros((self.num_envs,), dtype=bool)
@@ -221,6 +234,8 @@ def parse_agent_kwargs(raw_args: Iterable[str]) -> Dict[str, Any]:
 
 
 def build_env(args) -> AsyncVectorEnv:
+    action_map = np.asarray([2, 5, 4, 3], dtype=np.int64) if args.reduce_action_set else None
+
     def make_env(rank: int):
         def thunk():
             env = gym.make(f"ALE/{args.rom}-v5", obs_type='rgb', full_action_space=True)
@@ -233,21 +248,20 @@ def build_env(args) -> AsyncVectorEnv:
                 frame_skip=1,  # we handle frame_skip outside
                 screen_size=args.env_screen_size,
             )
-            action_map = np.asarray([2, 5, 4, 3], dtype=np.int64) if args.reduce_action_set else None
-            env = LatencyWrapper(
-                env,
-                latency_model_dir=args.latency_weights,
-                action_mapping=action_map,
-                simulate_latency=not args.disable_latency,
-                frame_skip=args.frame_skip,
-            )
             return env
 
         return thunk
 
     envs = [make_env(i) for i in range(args.num_envs)]
-    # Async vectorization to parallelize env stepping; latency handled inside workers
-    return AsyncVectorEnv(envs, shared_memory=True)
+    # Async vectorization to parallelize env stepping; latency handled in a single batched wrapper
+    venv = AsyncVectorEnv(envs, shared_memory=True)
+    return VectorLatencyWrapper(
+        venv,
+        latency_weights=args.latency_weights,
+        action_mapping=action_map,
+        frame_skip=args.frame_skip,
+        disable_latency=args.disable_latency,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

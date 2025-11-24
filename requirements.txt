@@ -1,7 +1,7 @@
 ale-py==0.10.1
 albumentations==1.4.6
 dearpygui==2.0.0
-# dt_apriltags==3.1.7
+dt_apriltags==3.1.7
 dynamixel_sdk==3.7.31
 editdistance==0.8.1
 gymnasium==0.29.1
@@ -16,7 +16,7 @@ Pillow==10.4.0
 pygame==2.6.0
 
 # use apt version of cv
-#opencv-python==4.11.0.86
+opencv-python==4.11.0.86
 
 psutil==7.0.0
 pynvml==11.5.0

@@ -267,6 +267,7 @@ class RainbowCore:
         data_dir: Optional[str] = None,
         load_file: Optional[str] = None,
         gpu: int = 0,
+        disable_training: bool = False,
     ):
         self.num_envs = num_envs
         self.num_actions = num_actions
@@ -301,7 +302,9 @@ class RainbowCore:
             self.device = torch.device('mps')
         else:
             self.device = torch.device('cpu')
+        print(f"[Rainbow] Using device: {self.device}")
 
+        self.disable_training = disable_training
         self.network = RainbowNetwork(stack_size, num_actions, num_atoms, obs_height, obs_width).to(self.device)
         self.target_network = RainbowNetwork(stack_size, num_actions, num_atoms, obs_height, obs_width).to(self.device)
         self.target_network.load_state_dict(self.network.state_dict())
@@ -365,6 +368,7 @@ class RainbowCore:
         self.last_max_q = 0.0
         self.last_td_error = 0.0
         self.last_grad_norm = 0.0
+        self.train_losses: List[float] = []
 
         self.support = torch.linspace(self.v_min, self.v_max, self.num_atoms, device=self.device)
 
@@ -524,6 +528,8 @@ class RainbowCore:
         self.frame_count += self.num_envs
 
     def train_step(self):
+        if self.disable_training:
+            return
         if self.replay.size < max(self.train_start, self.batch_size):
             return
         if self.frame_count % self.train_freq != 0:
@@ -592,6 +598,7 @@ class RainbowCore:
             self.loss_ema = 0.95 * self.loss_ema + 0.05 * self.last_loss
 
         self.last_td_error = float(sample_losses.detach().mean().item())
+        self.train_losses.append(self.loss_ema if self.loss_ema is not None else self.last_loss)
 
         self.training_steps += 1
         if self.training_steps % self.target_update_freq == 0:
@@ -617,6 +624,7 @@ class Agent:
             data_dir=data_dir,
             **kwargs,
         )
+        self.train_losses = self.core.train_losses
         self.prev_obs: Optional[np.ndarray] = None
         self.prev_reward = 0.0
         self.prev_done = False
