@@ -19,32 +19,18 @@ class LatencyModel:
                                           NumPy weight files: fc_weight.npy, fc_bias.npy,
                                           pred_weight.npy, pred_bias.npy.
         """
-        self.action_queue = []
-        for _ in range(30):  # Start with 30 NOOPs to fill the buffer
-            self.action_queue.append(self.__one_hot_encode(0, 0, 36))
+        # Action history buffer: shape (30, 36) using preallocated numpy arrays
+        self.action_queue = np.zeros((30, 36), dtype=np.float32)
+        noop_vec = np.zeros((36,), dtype=np.float32)
+        noop_vec[0] = 1.0
+        noop_vec[18] = 1.0
+        self.action_queue[:] = noop_vec
 
         self.fc_weight = np.load(f"{directory_with_weights}/fc_weight.npy")
         self.fc_bias = np.load(f"{directory_with_weights}/fc_bias.npy")
         self.pred_weight = np.load(f"{directory_with_weights}/pred_weight.npy")
         self.pred_bias = np.load(f"{directory_with_weights}/pred_bias.npy")
         self.last_action = 0
-
-    def __one_hot_encode(self, value, value_2, length):
-        """
-        Returns a one-hot encoded vector.
-
-        Args:
-            value (int): Index to be set as 1.
-            value_2 (int): Index in the second half to be set as 1
-            length (int): Length of the output vector.
-
-        Returns:
-            list[float]: One-hot encoded vector.
-        """
-        vec = [0.0] * length
-        vec[value] = 1.0
-        vec[18 + value_2] = 1.0
-        return vec
 
     def __forward(self, x):
         """
@@ -73,11 +59,20 @@ class LatencyModel:
             ale_py.Action: The action to actually execute, based on the model's prediction.
         """
         action = int(action)
-        # model input is history of the past 30 actions
-        if len(self.action_queue) == 30:
-            self.action_queue.pop(0)
-        self.action_queue.append(self.__one_hot_encode(action, self.last_action, 36))
-        representation = np.array(self.action_queue).reshape(1, -1)
+        # Ensure the queue remains a numpy array (can be converted if pickled oddly)
+        if not isinstance(self.action_queue, np.ndarray):
+            self.action_queue = np.asarray(self.action_queue, dtype=np.float32)
+            if self.action_queue.shape != (30, 36):
+                self.action_queue = np.zeros((30, 36), dtype=np.float32)
+                self.action_queue[0, 0] = 1.0
+                self.action_queue[0, 18] = 1.0
+        # model input is history of the past 30 actions; shift and insert latest one-hot
+        self.action_queue[:-1] = self.action_queue[1:]
+        hot = np.zeros((36,), dtype=np.float32)
+        hot[action] = 1.0
+        hot[18 + self.last_action] = 1.0
+        self.action_queue[-1] = hot
+        representation = self.action_queue.reshape(1, -1)
         logits = self.__forward(representation)
         probs = np.exp(logits - np.max(logits))  # for numerical stability
         probs /= np.sum(probs)

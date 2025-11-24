@@ -13,12 +13,13 @@ import torch.nn.functional as F
 
 from vector_agents import VectorAgent
 from agent_utils import preprocess_batch
+import cv2
 
 # Noisy layers / prioritized replay
 
 
 class NoisyLinear(nn.Module):
-    def __init__(self, in_features: int, out_features: int, sigma_init: float = 0.5):
+    def __init__(self, in_features: int, out_features: int, sigma_init: float = 0.6):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -84,7 +85,7 @@ class SumTree:
         idx = 1
         while idx < self.capacity:
             left = 2 * idx
-            if self.tree[left] >= prefixsum:
+            if float(self.tree[left].item()) >= prefixsum:
                 idx = left
             else:
                 prefixsum -= float(self.tree[left].item())
@@ -144,7 +145,8 @@ class PrioritizedReplay:
     def sample(self, batch_size: int):
         indices = []
         priorities = []
-        segment = self.tree.total() / batch_size
+        total = float(self.tree.total().item())
+        segment = total / batch_size
         for i in range(batch_size):
             a = segment * i
             b = segment * (i + 1)
@@ -157,7 +159,7 @@ class PrioritizedReplay:
         indices = np.array(indices, dtype=np.int64)
         priorities = np.array(priorities, dtype=np.float32)
 
-        probs = priorities / self.tree.total().item()
+        probs = priorities / total
         weights = (self.size * probs) ** (-self.beta)
         weights /= weights.max()
         weights = torch.from_numpy(weights).to(self.device, dtype=torch.float32)
@@ -253,7 +255,6 @@ class RainbowCore:
         epsilon_start: float = 0.0,
         epsilon_end: float = 0.0,
         epsilon_decay_frames: int = 1_000_000,
-        frame_skip: int = 1,
         grad_clip: Optional[float] = 10.0,
         n_step: int = 3,
         num_atoms: int = 51,
@@ -284,7 +285,6 @@ class RainbowCore:
         self.epsilon_end = epsilon_end
         self.epsilon_decay_frames = epsilon_decay_frames
         self.grad_clip = grad_clip
-        self.frame_skip = frame_skip
 
         self.n_step = n_step
         self.num_atoms = num_atoms
@@ -305,7 +305,21 @@ class RainbowCore:
         self.network = RainbowNetwork(stack_size, num_actions, num_atoms, obs_height, obs_width).to(self.device)
         self.target_network = RainbowNetwork(stack_size, num_actions, num_atoms, obs_height, obs_width).to(self.device)
         self.target_network.load_state_dict(self.network.state_dict())
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
+
+        # Use a slightly smaller LR for noisy parameters to slow σ drift without changing the base LR.
+        noisy_params = []
+        base_params = []
+        for name, param in self.network.named_parameters():
+            if "weight_sigma" in name or "bias_sigma" in name:
+                noisy_params.append(param)
+            else:
+                base_params.append(param)
+        self.optimizer = torch.optim.Adam(
+            [
+                {"params": base_params, "lr": learning_rate},
+                {"params": noisy_params, "lr": learning_rate * 0.5},
+            ]
+        )
 
         # Warn about memory footprint early so large 128x128x16 configs don't OOM.
         bytes_per_transition = stack_size * obs_height * obs_width  # uint8 per pixel
@@ -330,6 +344,13 @@ class RainbowCore:
         )
 
         self.state_stacks = np.zeros((num_envs, stack_size, obs_height, obs_width), dtype=np.uint8)
+        # Mirror on device to avoid per-step CPU->GPU tensor builds. Ring buffer index avoids costly rolls.
+        self.state_stacks_torch = torch.zeros(
+            (num_envs, stack_size, obs_height, obs_width), device=self.device, dtype=torch.uint8
+        )
+        self.write_idx = np.full((num_envs,), stack_size - 1, dtype=np.int64)
+        self.write_idx_torch = torch.full((num_envs,), stack_size - 1, device=self.device, dtype=torch.int64)
+        self.base_idx = torch.arange(self.stack_size, device=self.device, dtype=torch.int64)
         self.last_states = np.zeros_like(self.state_stacks)
         self.last_actions = np.full((num_envs,), -1, dtype=np.int64)
         self.n_step_buffers: List[Deque] = [deque(maxlen=self.n_step) for _ in range(num_envs)]
@@ -351,30 +372,88 @@ class RainbowCore:
         if load_file is not None and os.path.exists(load_file):
             self.load_model(load_file)
 
+    def _prepare_obs(self, observations: np.ndarray) -> np.ndarray:
+        """
+        Fast-path preprocessing: if observations are already grayscale HxW at the
+        configured resolution, skip cv2. Only fall back to preprocess_batch when
+        we receive RGB or mismatched shapes.
+        """
+        # Expect (num_envs, H, W) uint8 when AtariPreprocessing is used upstream.
+        if (
+            observations.ndim == 3
+            and observations.shape[1] == self.obs_height
+            and observations.shape[2] == self.obs_width
+            and observations.dtype == np.uint8
+        ):
+            return observations
+
+        # Otherwise fall back to the original cv2-based preprocessing.
+        if observations.ndim == 4 and observations.shape[1] == 3:
+            observations = np.transpose(observations, (0, 2, 3, 1))
+        if observations.ndim == 4 and observations.shape[-1] == 3:
+            return preprocess_batch(observations, self.obs_height, self.obs_width)
+
+        # If shape is unexpected (e.g., channel-first), convert via cv2 resize.
+        num_envs = observations.shape[0]
+        processed = np.zeros((num_envs, self.obs_height, self.obs_width), dtype=np.uint8)
+        for i in range(num_envs):
+            frame = observations[i]
+            if frame.ndim == 3:
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+            frame = cv2.resize(frame, (self.obs_width, self.obs_height), interpolation=cv2.INTER_AREA)
+            processed[i] = frame
+        return processed
+
     def epsilon_scheduler(self) -> float:
         frac = min(self.frame_count / float(self.epsilon_decay_frames), 1.0)
         return self.epsilon_start + frac * (self.epsilon_end - self.epsilon_start)
 
     def reset(self, observations: np.ndarray):
-        processed = preprocess_batch(observations, self.obs_height, self.obs_width)
+        processed = self._prepare_obs(observations)
         for env in range(self.num_envs):
             self.state_stacks[env] = np.repeat(processed[env][None, ...], self.stack_size, axis=0)
             self.last_actions[env] = -1
             self.n_step_buffers[env].clear()
+        # reset ring indices
+        self.write_idx.fill(self.stack_size - 1)
+        self.write_idx_torch.fill_(self.stack_size - 1)
+        # sync torch buffer
+        frame_torch = torch.from_numpy(processed).to(self.device, non_blocking=True)
+        self.state_stacks_torch = frame_torch.unsqueeze(1).repeat(1, self.stack_size, 1, 1)
 
     def act(self, observations: np.ndarray) -> np.ndarray:
-        processed = preprocess_batch(observations, self.obs_height, self.obs_width)
-        self.state_stacks = np.roll(self.state_stacks, shift=-1, axis=1)
-        self.state_stacks[:, -1, :, :] = processed
+        processed = self._prepare_obs(observations)
+        # advance ring index
+        self.write_idx = (self.write_idx + 1) % self.stack_size
+        self.write_idx_torch = (self.write_idx_torch + 1) % self.stack_size
+
+        # Update numpy buffer (for replay bookkeeping) at the current write slot
+        self.state_stacks[np.arange(self.num_envs), self.write_idx, :, :] = processed
+        # Update torch buffer on device without host/device ping-pong
+        frame_torch = torch.from_numpy(processed).to(self.device, non_blocking=True)
+        self.state_stacks_torch[np.arange(self.num_envs), self.write_idx, :, :] = frame_torch
+
+        # Gather ordered stacks using ring indices (oldest->newest)
+        order_idx = (self.write_idx_torch.unsqueeze(1) + 1 + self.base_idx) % self.stack_size
+        gather_idx = order_idx.view(self.num_envs, self.stack_size, 1, 1).expand(
+            -1, -1, self.obs_height, self.obs_width
+        )
+        stacked_torch = torch.gather(self.state_stacks_torch, 1, gather_idx)
+        stacked = stacked_torch.float().mul_(1.0 / 255.0)
+
+        # also keep numpy ordered stacks for replay bookkeeping
+        order_idx_np = (self.write_idx[:, None] + 1 + np.arange(self.stack_size)) % self.stack_size
+        self.last_states = np.take_along_axis(
+            self.state_stacks, order_idx_np[:, :, None, None], axis=1
+        )
 
         self.epsilon = self.epsilon_scheduler()
         actions = np.empty(self.num_envs, dtype=np.int64)
-        stacked = torch.from_numpy(self.state_stacks).to(self.device, dtype=torch.float32) / 255.0
 
         with torch.no_grad():
             self.network.reset_noise()
             q_values = self.network.q_values(stacked, self.support)
-            greedy_actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            greedy_actions = torch.argmax(q_values, dim=1)
             self.last_avg_q = float(q_values.mean().item())
             self.last_max_q = float(q_values.max().item())
 
@@ -382,9 +461,8 @@ class RainbowCore:
             if np.random.random() < self.epsilon:
                 actions[env] = np.random.randint(self.num_actions)
             else:
-                actions[env] = int(greedy_actions[env])
+                actions[env] = int(greedy_actions[env].item())
 
-        self.last_states = self.state_stacks.copy()
         self.last_actions = actions.copy()
         return actions
 
@@ -392,24 +470,28 @@ class RainbowCore:
         buffer = self.n_step_buffers[env]
         if len(buffer) == 0:
             return
-        cumulative_reward = 0.0
-        for idx, (r, d, _, _) in enumerate(buffer):
-            cumulative_reward += (self.gamma**idx) * r
-            if d:
-                done = True
-                break
-        state, action = buffer[0][2], buffer[0][3]
-        if done:
-            next_state = np.repeat(processed_next[None, ...], self.stack_size, axis=0)
-        else:
-            next_state = self.state_stacks[env]
-        self.replay.add(state, action, cumulative_reward, next_state, done)
-        buffer.clear()
+        while buffer:
+            cumulative_reward = 0.0
+            for idx, (r, d, _, _) in enumerate(buffer):
+                cumulative_reward += (self.gamma**idx) * r
+                if d:
+                    done = True
+                    break
+            state, action = buffer[0][2], buffer[0][3]
+            if done:
+                next_state = np.repeat(processed_next[None, ...], self.stack_size, axis=0)
+            else:
+                order_idx = (self.write_idx[env] + 1 + np.arange(self.stack_size)) % self.stack_size
+                next_state = np.take_along_axis(
+                    self.state_stacks[env], order_idx[:, None, None], axis=0
+                )
+            self.replay.add(state, action, cumulative_reward, next_state, done)
+            buffer.popleft()
 
     def observe(self, next_observations, rewards, terminations, truncations):
-        processed = preprocess_batch(next_observations, self.obs_height, self.obs_width)
-        next_stacks = self.state_stacks.copy()
-        next_stacks = np.roll(next_stacks, shift=-1, axis=1)
+        processed = self._prepare_obs(next_observations)
+        next_stacks = np.empty_like(self.last_states)
+        next_stacks[:, :-1, :, :] = self.last_states[:, 1:, :, :]
         next_stacks[:, -1, :, :] = processed
 
         for env in range(self.num_envs):
@@ -420,22 +502,24 @@ class RainbowCore:
             done = bool(terminations[env] or truncations[env])
             self.n_step_buffers[env].append((rewards[env], done, self.last_states[env], action))
 
-            if len(self.n_step_buffers[env]) == self.n_step:
+            if done:
+                self._flush_n_step(env, processed[env], done)
+                stack = np.repeat(processed[env][None, ...], self.stack_size, axis=0)
+                self.state_stacks[env] = stack
+                self.state_stacks_torch[env] = torch.from_numpy(stack).to(self.device, non_blocking=True)
+                self.write_idx[env] = self.stack_size - 1
+                self.write_idx_torch[env] = self.stack_size - 1
+                self.last_actions[env] = -1
+            elif len(self.n_step_buffers[env]) == self.n_step:
                 cumulative_reward = 0.0
                 for idx, (r, d, _, _) in enumerate(self.n_step_buffers[env]):
                     cumulative_reward += (self.gamma**idx) * r
                     if d:
                         break
-                state = self.n_step_buffers[env][0][2]
+                state, oldest_action = self.n_step_buffers[env][0][2], self.n_step_buffers[env][0][3]
                 next_state = next_stacks[env]
-                final_done = done
-                self.replay.add(state, action, cumulative_reward, next_state, final_done)
-
-            if done:
-                self._flush_n_step(env, processed[env], done)
-                stack = np.repeat(processed[env][None, ...], self.stack_size, axis=0)
-                self.state_stacks[env] = stack
-                self.last_actions[env] = -1
+                final_done = any(d for (_, d, _, _) in self.n_step_buffers[env])
+                self.replay.add(state, oldest_action, cumulative_reward, next_state, final_done)
 
         self.frame_count += self.num_envs
 
@@ -470,8 +554,17 @@ class RainbowCore:
                 device=self.device,
                 dtype=torch.int64,
             ).unsqueeze(1)
-            proj_dist.view(-1).index_add_(0, (l + offset).view(-1), (target_probs * (u.float() - b)).view(-1))
-            proj_dist.view(-1).index_add_(0, (u + offset).view(-1), (target_probs * (b - l.float())).view(-1))
+            l_idx = (l + offset).view(-1)
+            u_idx = (u + offset).view(-1)
+            l_weight = (u.float() - b).view(-1)
+            u_weight = (b - l.float()).view(-1)
+            flat_target = target_probs.view(-1)
+            eq_mask = l_idx == u_idx
+            if eq_mask.any():
+                proj_dist.view(-1).index_add_(0, l_idx[eq_mask], flat_target[eq_mask])
+            if (~eq_mask).any():
+                proj_dist.view(-1).index_add_(0, l_idx[~eq_mask], (flat_target * l_weight)[~eq_mask])
+                proj_dist.view(-1).index_add_(0, u_idx[~eq_mask], (flat_target * u_weight)[~eq_mask])
 
         self.network.reset_noise()
         probs, log_probs = self.network(states)
@@ -530,25 +623,27 @@ class Agent:
 
     def frame(self, observation_rgb8, reward, end_of_episode):
         obs_batch = observation_rgb8[None, ...]
+        done = bool(end_of_episode > 0)
         if self.prev_obs is None:
             self.core.reset(obs_batch)
-        actions = self.core.act(obs_batch)
-        if self.prev_obs is not None:
+        else:
             self.core.observe(
-                self.prev_obs,
-                np.array([self.prev_reward]),
-                np.array([self.prev_done]),
+                obs_batch,
+                np.array([reward]),
+                np.array([done]),
                 np.array([False]),
             )
             self.core.train_step()
 
-        self.prev_obs = observation_rgb8[None, ...]
+        actions = self.core.act(obs_batch)
+
+        self.prev_obs = obs_batch
         self.prev_reward = reward
-        self.prev_done = bool(end_of_episode > 0)
+        self.prev_done = done
         return int(actions[0])
 
     def save_model(self, path: str) -> None:
-        self.core.load_model(path)
+        self.core.save_model(path)
 
 
 # Vector Adapter
@@ -574,14 +669,18 @@ class VectorRainbowAgent(VectorAgent):
             **kwargs,
         )
         self.num_envs = num_envs
+        self._initialized = False
 
     def reset(self, num_envs: int) -> None:
         if num_envs != self.num_envs:
             raise ValueError(f"VectorRainbowAgent intialised for {self.num_envs} envs; recieved {num_envs}.")
-        # actual reset happens on first observe call
-        pass
+        # actual reset happens on first act call
+        self._initialized = False
 
     def act(self, observations: np.ndarray) -> np.ndarray:
+        if not self._initialized:
+            self.core.reset(observations)
+            self._initialized = True
         return self.core.act(observations)
 
     def observe(self, next_observations, rewards, terminations, truncations, infos):
