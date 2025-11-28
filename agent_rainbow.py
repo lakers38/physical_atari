@@ -237,10 +237,16 @@ class PrioritizedReplay:
 
     def load(self, path: str) -> None:
         """Load replay buffer from disk."""
+        import os
+        file_size_mb = os.path.getsize(path) / (1024 * 1024)
+        logger.info(f"Loading replay buffer from {path} ({file_size_mb:.1f} MB)... this may take a while")
+        
         data = np.load(path, allow_pickle=True)
         
         # Restore buffer data
         size = len(data["states"])
+        logger.info(f"Restoring {size} transitions...")
+        
         self.states[:size] = data["states"]
         self.next_states[:size] = data["next_states"]
         self.actions[:size] = data["actions"]
