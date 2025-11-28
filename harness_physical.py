@@ -144,7 +144,14 @@ def main(args):
             episode_queue = None
 
         load_model = None
-        if args.load_model is not None:
+        load_checkpoint = None
+        if args.load_checkpoint is not None:
+            # Load full checkpoint (model + replay buffer) for resuming training
+            if os.path.exists(args.load_checkpoint):
+                load_checkpoint = args.load_checkpoint
+            else:
+                logger.warning(f"Could not find checkpoint: {args.load_checkpoint}")
+        elif args.load_model is not None:
             # Check if the model file exists (with or without .zip extension for SB3 models)
             if os.path.exists(args.load_model):
                 load_model = args.load_model
@@ -193,9 +200,10 @@ def main(args):
                     game_name = os.path.splitext(os.path.basename(args.game_config))[0]
                     # Use experiment directory (second-to-last in run path) to avoid long names
                     run_name_suffix = os.path.basename(os.path.dirname(run_dir))
+                    wandb_run_name = args.wandb_run_name or f"{experiment_timestamp}-{args.agent_type}-real"
                     wandb.init(
                         project="physical-atari",
-                        name=f"{experiment_timestamp}-{args.agent_type}-real",
+                        name=wandb_run_name,
                         config={
                             "agent_type": args.agent_type,
                             "game": game_name,
@@ -268,8 +276,18 @@ def main(args):
 
                 agent = Agent(run_dir, seed, num_actions, total_frames, **agent_args)
 
+                # Load full checkpoint if specified (for resuming training with replay buffer)
+                if load_checkpoint is not None and args.agent_type == 'agent_rainbow':
+                    if hasattr(agent, 'load_checkpoint'):
+                        agent.load_checkpoint(load_checkpoint)
+                    else:
+                        logger.warning("Agent does not support checkpoint loading, using load_model instead")
+                        agent.core.load_model(load_checkpoint)
+
                 last_model_save = -1
-                save_incremental_model = args.save_model and args.save_model_increment > 0
+                last_checkpoint_save = -1
+                save_incremental_model = args.save_model and args.save_increment > 0
+                save_incremental_checkpoint = args.save_checkpoint and args.save_increment > 0
 
                 episode_avg = 0
                 episode_scores = []
@@ -308,6 +326,9 @@ def main(args):
                 action_counts = np.zeros(num_actions)  # Track action distribution
                 current_episode_reward = 0
                 current_episode_length = 0
+                score_ema = None  # Exponential moving average of episode scores
+                score_ema_alpha = 0.05  # EMA smoothing factor (matches sim_latency_vec.py)
+                last_detected_score = 0  # Track last non-zero detected score for logging
 
                 if args.capture_frames:
                     # raw filename expect format: name_{w}x{h}.{y or rgb}
@@ -339,11 +360,18 @@ def main(args):
                         logger.info("Exit requested by GUI. Exiting training.")
                         break
 
-                    if save_incremental_model and (u + 1) // args.save_model_increment != last_model_save:
-                        last_model_save = (u + 1) // args.save_model_increment
-                        filename = f'{run_dir}/{game}_{args.agent_type}.model'
+                    if save_incremental_model and (u + 1) // args.save_increment != last_model_save:
+                        last_model_save = (u + 1) // args.save_increment
+                        filename = f'{run_dir}/{game}_{args.agent_type}_frame{u+1}.model'
                         logger.info('writing ' + filename)
                         agent.save_model(filename)
+
+                    # Save full checkpoint independently (for resuming training)
+                    if save_incremental_checkpoint and (u + 1) // args.save_increment != last_checkpoint_save:
+                        last_checkpoint_save = (u + 1) // args.save_increment
+                        if hasattr(agent, 'save_checkpoint'):
+                            checkpoint_filename = f'{run_dir}/{game}_{args.agent_type}_frame{u+1}.checkpoint.pt'
+                            agent.save_checkpoint(checkpoint_filename)
 
                     # fill in our average score graph so we get exactly 1000 points on it
                     if u * episode_graph.shape[0] // total_frames != (u + 1) * episode_graph.shape[0] // total_frames:
@@ -374,6 +402,9 @@ def main(args):
                     cmd = delayed_actions.pop(0)
                     reward, info = env.act(action_set[cmd])
                     running_episode_score += reward
+                    # Track detected score (save last non-zero for game-over logging)
+                    if info["score"] > 0:
+                        last_detected_score = info["score"]
                     torch.cuda.nvtx.range_pop()
                     interframe_period = start - last_frame_time
                     last_frame_time = start
@@ -403,7 +434,14 @@ def main(args):
                         frames = u - environment_start
                         episode_end.append(u)
                         environment_start = u
-                        episode_scores.append(running_episode_score)
+                        episode_scores.append(last_detected_score)  # Use detected score (same as GUI)
+
+                        # Update score EMA based on detected score
+                        if score_ema is None:
+                            score_ema = last_detected_score
+                        else:
+                            score_ema = score_ema_alpha * last_detected_score + (1 - score_ema_alpha) * score_ema
+
                         running_episode_score = 0
 
                         # calculate step speed
@@ -412,12 +450,12 @@ def main(args):
                         environment_start_time = now
 
                         logger.info(
-                            f'{game} frame:{u:7} {ep_frames_per_second:4.0f}/s eps {len(episode_scores) - 1},{frames:5}={int(episode_scores[-1]):5} avg {episode_avg:4.1f}'
+                            f'{game} frame:{u:7} {ep_frames_per_second:4.0f}/s eps {len(episode_scores) - 1},{frames:5}={int(last_detected_score):5} avg {episode_avg:4.1f}'
                         )
 
                         if score_file:
                             score_file.write(
-                                f"{game} episode: {len(episode_scores)} frame: {u} score: {episode_scores[-1]} "
+                                f"{game} episode: {len(episode_scores)} frame: {u} score: {last_detected_score} "
                                 + "time: %7.2f\n" % (time.time() - experiment_start_time)
                             )
                             score_file.flush()
@@ -428,7 +466,7 @@ def main(args):
 
                         if episode_queue is not None:
                             episode_data = {
-                                "episode": (episode_scores[-1], episode_end[-1]),
+                                "episode": (last_detected_score, episode_end[-1]),
                                 "episode_avg": episode_avg if episode_avg != -999 else 0,
                             }
                             episode_queue.put(episode_data)
@@ -451,23 +489,18 @@ def main(args):
                     # Log to wandb on episode end
                     if end_of_episode > 1 and args.wandb and WANDB_AVAILABLE:
                         avg_score = episode_avg if episode_avg != -999 else 0
-                        avg_reward = avg_score  # rewards and scores are equivalent in this harness
                         wandb.log({
-                            "episode/reward": current_episode_reward,
-                            "episode/length": current_episode_length,
-                            "episode/score": info["score"],
-                            "episode/lives": env.lives(),
-                            "episode/avg_score": avg_score,
-                            "episode/number": len(episode_scores),
-                            # Additional wandb metrics
-                            "episode/current_score": info["score"],
+                            "episode/score": last_detected_score,
                             "episode/average_score": avg_score,
-                            "episode/current_reward": current_episode_reward,
-                            "episode/average_reward": avg_reward,
+                            "episode/score_ema": score_ema if score_ema is not None else 0,
+                            "episode/length": current_episode_length,
+                            "episode/lives": env.lives(),
+                            "episode/number": len(episode_scores),
                         }, step=u)
                         # Reset episode tracking
                         current_episode_reward = 0
                         current_episode_length = 0
+                        last_detected_score = 0  # Reset for next episode
 
                     # Periodically log action distribution and FPS
                     if u % 100 == 0 and args.wandb and WANDB_AVAILABLE:
@@ -481,14 +514,12 @@ def main(args):
                         action_log["actions/current_action_label"] = action_names[taken_action]
                         action_log["performance/fps"] = fps
                         action_log["performance/frame"] = u
-                        # Surface live score/reward metrics frequently for dashboards
+                        # Surface live score metrics frequently for dashboards
                         avg_score = episode_avg if episode_avg != -999 else 0
-                        avg_reward = avg_score
                         action_log.update({
                             "live/current_score": info["score"],
                             "live/average_score": avg_score,
-                            "live/current_reward": current_episode_reward,
-                            "live/average_reward": avg_reward,
+                            "live/score_ema": score_ema if score_ema is not None else 0,
                         })
                         wandb.log(action_log, step=u)
 
@@ -564,6 +595,11 @@ def main(args):
                     filename = f'{run_dir}/{game}_{args.agent_type}.model'
                     logger.info('writing ' + filename)
                     agent.save_model(filename)
+
+                # Save final checkpoint independently (for resuming training)
+                if args.save_checkpoint and hasattr(agent, 'save_checkpoint'):
+                    checkpoint_filename = f'{run_dir}/{game}_{args.agent_type}.checkpoint.pt'
+                    agent.save_checkpoint(checkpoint_filename)
 
                 env.close()
                 env = None
@@ -697,15 +733,21 @@ def get_argument_parser():
     # parser.add_argument('--ppo_frame_skip', type=int, default=4)
     parser.add_argument('--wandb', action='store_true', default=False,
                         help='Enable wandb logging for all metrics (training, episodes, rewards, FPS, actions)')
+    parser.add_argument('--wandb_run_name', type=str, default=None,
+                        help='Optional custom wandb run name; defaults to timestamp-agent_type-real')
 
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--load_model', type=str, default=None)
+    parser.add_argument('--load_checkpoint', type=str, default=None,
+                        help="Load full checkpoint (model + replay buffer) for resuming training (Rainbow only)")
     parser.add_argument('--save_model', action='store_true')
+    parser.add_argument('--save_checkpoint', action='store_true',
+                        help="Save full checkpoints (model + replay buffer) for resuming training (Rainbow only)")
     parser.add_argument(
-        '--save_model_increment',
+        '--save_increment',
         type=int,
         default=0,
-        help="when save_model=True and save_model_increment > 0, save the model every 'save_model_increment' frames.",
+        help="Save model/checkpoint every N frames (requires --save_model or --save_checkpoint)",
     )
     parser.add_argument('--log_scores', action='store_true')
     parser.add_argument('--log_score_images', action='store_true')

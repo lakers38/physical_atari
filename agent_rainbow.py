@@ -15,6 +15,11 @@ from vector_agents import VectorAgent
 from agent_utils import preprocess_batch
 import cv2
 
+from framework.Logger import logger
+
+# Expected observation dimensions from physical harness (matches agent_ppo)
+EXPECTED_OBS_DIMS = (210, 160, 3)
+
 # Noisy layers / prioritized replay
 
 
@@ -180,6 +185,44 @@ class PrioritizedReplay:
             self.tree.update(idx, priority**self.alpha)
             self.max_priority = max(self.max_priority, priority)
 
+    def save(self, path: str) -> None:
+        """Save replay buffer to disk."""
+        data = {
+            "states": self.states[:self.size] if not self.full else self.states,
+            "next_states": self.next_states[:self.size] if not self.full else self.next_states,
+            "actions": self.actions[:self.size] if not self.full else self.actions,
+            "rewards": self.rewards[:self.size] if not self.full else self.rewards,
+            "dones": self.dones[:self.size] if not self.full else self.dones,
+            "tree": self.tree.tree.numpy(),
+            "max_priority": self.max_priority,
+            "ptr": self.ptr,
+            "full": self.full,
+            "beta": self.beta,
+        }
+        np.savez_compressed(path, **data)
+        logger.info(f"Saved replay buffer ({self.size} transitions) to {path}")
+
+    def load(self, path: str) -> None:
+        """Load replay buffer from disk."""
+        data = np.load(path, allow_pickle=True)
+        
+        # Restore buffer data
+        size = len(data["states"])
+        self.states[:size] = data["states"]
+        self.next_states[:size] = data["next_states"]
+        self.actions[:size] = data["actions"]
+        self.rewards[:size] = data["rewards"]
+        self.dones[:size] = data["dones"]
+        
+        # Restore tree and metadata
+        self.tree.tree = torch.from_numpy(data["tree"])
+        self.max_priority = float(data["max_priority"])
+        self.ptr = int(data["ptr"])
+        self.full = bool(data["full"])
+        self.beta = float(data["beta"])
+        
+        logger.info(f"Loaded replay buffer ({self.size} transitions) from {path}")
+
 
 class RainbowNetwork(nn.Module):
     def __init__(self, in_channels: int, num_actions: int, num_atoms: int, obs_height: int, obs_width: int):
@@ -295,14 +338,15 @@ class RainbowCore:
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        if torch.cuda.is_available():
+        # GPU handling with fallback (matches agent_ppo behavior)
+        if torch.cuda.is_available() and gpu >= 0:
             self.device = torch.device(f'cuda:{gpu}')
             torch.cuda.manual_seed_all(seed)
         elif torch.backends.mps.is_available():
             self.device = torch.device('mps')
         else:
             self.device = torch.device('cpu')
-        print(f"[Rainbow] Using device: {self.device}")
+        logger.info(f"agent_rainbow: Using device: {self.device}")
 
         self.disable_training = disable_training
         self.network = RainbowNetwork(stack_size, num_actions, num_atoms, obs_height, obs_width).to(self.device)
@@ -612,8 +656,53 @@ class RainbowCore:
         self.network.load_state_dict(state_dict)
         self.target_network.load_state_dict(state_dict)
 
+    def save_checkpoint(self, path: str) -> None:
+        """Save full training checkpoint including model, optimizer, replay buffer, and training state."""
+        # Save model and optimizer
+        checkpoint = {
+            "network_state_dict": self.network.state_dict(),
+            "target_network_state_dict": self.target_network.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "frame_count": self.frame_count,
+            "training_steps": self.training_steps,
+            "epsilon": self.epsilon,
+            "loss_ema": self.loss_ema,
+        }
+        torch.save(checkpoint, path)
+        
+        # Save replay buffer separately (can be large)
+        replay_path = path.replace(".pt", "_replay.npz").replace(".model", "_replay.npz")
+        if replay_path == path:
+            replay_path = path + "_replay.npz"
+        self.replay.save(replay_path)
+        
+        logger.info(f"Saved checkpoint to {path} (frame {self.frame_count}, {self.training_steps} training steps)")
 
-# Single-env adapter
+    def load_checkpoint(self, path: str) -> None:
+        """Load full training checkpoint including model, optimizer, replay buffer, and training state."""
+        checkpoint = torch.load(path, map_location=self.device)
+        
+        self.network.load_state_dict(checkpoint["network_state_dict"])
+        self.target_network.load_state_dict(checkpoint["target_network_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        self.frame_count = checkpoint["frame_count"]
+        self.training_steps = checkpoint["training_steps"]
+        self.epsilon = checkpoint["epsilon"]
+        self.loss_ema = checkpoint.get("loss_ema", None)
+        
+        # Load replay buffer
+        replay_path = path.replace(".pt", "_replay.npz").replace(".model", "_replay.npz")
+        if replay_path == path:
+            replay_path = path + "_replay.npz"
+        if os.path.exists(replay_path):
+            self.replay.load(replay_path)
+        else:
+            logger.warning(f"Replay buffer not found at {replay_path}, starting with empty buffer")
+        
+        logger.info(f"Loaded checkpoint from {path} (frame {self.frame_count}, {self.training_steps} training steps)")
+
+
+# Single-env adapter for physical harness
 class Agent:
     def __init__(self, data_dir=None, seed=0, num_actions=18, total_frames=1_000_000, **kwargs):
         self.core = RainbowCore(
@@ -629,15 +718,73 @@ class Agent:
         self.prev_reward = 0.0
         self.prev_done = False
 
+        # Frame skipping to match PPO behavior (act every frame_skip frames)
+        self.frame_skip = 4
+        self.step_count = 0
+        self.last_action = 0
+
+        # Accumulate rewards over frame_skip frames (matches SB3/PPO behavior)
+        self.accumulated_reward = 0.0
+
+        logger.info(f"agent_rainbow: Initialized with frame_skip={self.frame_skip}")
+
     def frame(self, observation_rgb8, reward, end_of_episode):
-        obs_batch = observation_rgb8[None, ...]
+        """
+        Called every frame by harness.
+
+        Args:
+            observation_rgb8: RGB observation (210, 160, 3) uint8
+            reward: Scalar reward from environment
+            end_of_episode: 0=ongoing, 1=life lost, 2=game over, 3=timeout
+
+        Returns:
+            action_index: Integer action index to execute
+        """
+        # Validate input shape (matches agent_ppo)
+        assert observation_rgb8.shape == EXPECTED_OBS_DIMS, \
+            f"Observation shape is: {observation_rgb8.shape}, but we expected: {EXPECTED_OBS_DIMS}"
+
+        self.step_count += 1
         done = bool(end_of_episode > 0)
+
+        # Accumulate rewards FIRST (before any reset logic)
+        self.accumulated_reward += reward
+
+        # Handle episode end logging
+        if end_of_episode > 0:
+            if end_of_episode == 1:
+                end_reason = "life lost"
+            elif end_of_episode == 2:
+                end_reason = "game over"
+            else:
+                end_reason = "timeout"
+            logger.debug(f"agent_rainbow: Episode end at step {self.step_count}: {end_reason}")
+
+        # Only act every frame_skip frames (matches PPO behavior)
+        if self.step_count % self.frame_skip != 0:
+            # If episode ends mid-frameskip, flush the accumulated reward
+            if end_of_episode > 0 and self.prev_obs is not None:
+                obs_batch = observation_rgb8[None, ...]
+                self.core.observe(
+                    obs_batch,
+                    np.array([self.accumulated_reward]),
+                    np.array([done]),
+                    np.array([False]),
+                )
+                self.core.train_step()
+                self.accumulated_reward = 0.0
+                self.prev_obs = None
+            return self.last_action
+
+        obs_batch = observation_rgb8[None, ...]
+
         if self.prev_obs is None:
             self.core.reset(obs_batch)
         else:
+            # Use accumulated reward instead of single-frame reward
             self.core.observe(
                 obs_batch,
-                np.array([reward]),
+                np.array([self.accumulated_reward]),
                 np.array([done]),
                 np.array([False]),
             )
@@ -646,12 +793,29 @@ class Agent:
         actions = self.core.act(obs_batch)
 
         self.prev_obs = obs_batch
-        self.prev_reward = reward
+        self.prev_reward = self.accumulated_reward
         self.prev_done = done
-        return int(actions[0])
+        self.last_action = int(actions[0])
+
+        # Reset accumulated reward after using it
+        self.accumulated_reward = 0.0
+
+        # Handle episode end - reset state for next episode
+        if end_of_episode > 0:
+            self.prev_obs = None
+
+        return self.last_action
 
     def save_model(self, path: str) -> None:
         self.core.save_model(path)
+
+    def save_checkpoint(self, path: str) -> None:
+        """Save full checkpoint including replay buffer for resuming training."""
+        self.core.save_checkpoint(path)
+
+    def load_checkpoint(self, path: str) -> None:
+        """Load full checkpoint including replay buffer for resuming training."""
+        self.core.load_checkpoint(path)
 
 
 # Vector Adapter

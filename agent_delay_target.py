@@ -339,7 +339,7 @@ class cuda_graph_wrapper:
 
     def __call__(self):
         if self.cuda_graph:
-            #            self.stream.wait_stream(torch.cuda.current_stream())
+            # self.stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(self.stream):
                 self.cuda_graph.replay()
             return
@@ -587,7 +587,6 @@ class Agent:
 
         self.distribution_factor_buffer = torch.full((self.total_frames, total_model_outputs), -999.0)
 
-        self.resample_from = (0, 0, 0)
         self.episode_number = 0
         self.train_losses = []
 
