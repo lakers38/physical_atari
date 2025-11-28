@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import time
+import threading
 from collections import deque
 from typing import Deque, Dict, Iterable, List, Optional, Tuple
 
@@ -16,6 +17,10 @@ from agent_utils import preprocess_batch
 import cv2
 
 from framework.Logger import logger
+
+# Background save thread for non-blocking checkpoint saves
+_save_thread: Optional[threading.Thread] = None
+_save_lock = threading.Lock()
 
 # Expected observation dimensions from physical harness (matches agent_ppo)
 EXPECTED_OBS_DIMS = (210, 160, 3)
@@ -185,22 +190,50 @@ class PrioritizedReplay:
             self.tree.update(idx, priority**self.alpha)
             self.max_priority = max(self.max_priority, priority)
 
-    def save(self, path: str) -> None:
-        """Save replay buffer to disk."""
+    def save(self, path: str, background: bool = True) -> None:
+        """Save replay buffer to disk.
+        
+        Args:
+            path: Path to save the buffer
+            background: If True, save in background thread (non-blocking)
+        """
+        global _save_thread
+        
+        # Make copies of data for background save (so main thread can continue)
+        size = self.size
         data = {
-            "states": self.states[:self.size] if not self.full else self.states,
-            "next_states": self.next_states[:self.size] if not self.full else self.next_states,
-            "actions": self.actions[:self.size] if not self.full else self.actions,
-            "rewards": self.rewards[:self.size] if not self.full else self.rewards,
-            "dones": self.dones[:self.size] if not self.full else self.dones,
-            "tree": self.tree.tree.numpy(),
+            "states": self.states[:size].copy() if not self.full else self.states.copy(),
+            "next_states": self.next_states[:size].copy() if not self.full else self.next_states.copy(),
+            "actions": self.actions[:size].copy() if not self.full else self.actions.copy(),
+            "rewards": self.rewards[:size].copy() if not self.full else self.rewards.copy(),
+            "dones": self.dones[:size].copy() if not self.full else self.dones.copy(),
+            "tree": self.tree.tree.numpy().copy(),
             "max_priority": self.max_priority,
             "ptr": self.ptr,
             "full": self.full,
             "beta": self.beta,
         }
-        np.savez_compressed(path, **data)
-        logger.info(f"Saved replay buffer ({self.size} transitions) to {path}")
+        
+        def _save_worker(data, path, size):
+            with _save_lock:
+                try:
+                    np.savez_compressed(path, **data)
+                    logger.info(f"Saved replay buffer ({size} transitions) to {path}")
+                except Exception as e:
+                    logger.error(f"Failed to save replay buffer: {e}")
+        
+        if background:
+            # Wait for any previous save to complete
+            if _save_thread is not None and _save_thread.is_alive():
+                logger.debug("Waiting for previous save to complete...")
+                _save_thread.join()
+            
+            _save_thread = threading.Thread(target=_save_worker, args=(data, path, size))
+            _save_thread.daemon = True
+            _save_thread.start()
+            logger.info(f"Started background save of replay buffer ({size} transitions)")
+        else:
+            _save_worker(data, path, size)
 
     def load(self, path: str) -> None:
         """Load replay buffer from disk."""
@@ -656,9 +689,14 @@ class RainbowCore:
         self.network.load_state_dict(state_dict)
         self.target_network.load_state_dict(state_dict)
 
-    def save_checkpoint(self, path: str) -> None:
-        """Save full training checkpoint including model, optimizer, replay buffer, and training state."""
-        # Save model and optimizer
+    def save_checkpoint(self, path: str, background: bool = True) -> None:
+        """Save full training checkpoint including model, optimizer, replay buffer, and training state.
+        
+        Args:
+            path: Path to save the checkpoint
+            background: If True, save replay buffer in background thread (non-blocking)
+        """
+        # Save model and optimizer (small, do synchronously)
         checkpoint = {
             "network_state_dict": self.network.state_dict(),
             "target_network_state_dict": self.target_network.state_dict(),
@@ -669,14 +707,13 @@ class RainbowCore:
             "loss_ema": self.loss_ema,
         }
         torch.save(checkpoint, path)
+        logger.info(f"Saved checkpoint to {path} (frame {self.frame_count}, {self.training_steps} training steps)")
         
-        # Save replay buffer separately (can be large)
+        # Save replay buffer separately (can be large, do in background)
         replay_path = path.replace(".pt", "_replay.npz").replace(".model", "_replay.npz")
         if replay_path == path:
             replay_path = path + "_replay.npz"
-        self.replay.save(replay_path)
-        
-        logger.info(f"Saved checkpoint to {path} (frame {self.frame_count}, {self.training_steps} training steps)")
+        self.replay.save(replay_path, background=background)
 
     def load_checkpoint(self, path: str) -> None:
         """Load full training checkpoint including model, optimizer, replay buffer, and training state."""
