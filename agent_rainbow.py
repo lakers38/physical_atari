@@ -229,38 +229,48 @@ class PrioritizedReplay:
                 _save_thread.join()
             
             _save_thread = threading.Thread(target=_save_worker, args=(data, path, size))
-            _save_thread.daemon = True
+            _save_thread.daemon = False  # Don't kill thread on exit - let it complete
             _save_thread.start()
             logger.info(f"Started background save of replay buffer ({size} transitions)")
         else:
             _save_worker(data, path, size)
 
-    def load(self, path: str) -> None:
-        """Load replay buffer from disk."""
+    def load(self, path: str) -> bool:
+        """Load replay buffer from disk.
+        
+        Returns:
+            True if load succeeded, False if file is corrupted/invalid
+        """
         import os
         file_size_mb = os.path.getsize(path) / (1024 * 1024)
         logger.info(f"Loading replay buffer from {path} ({file_size_mb:.1f} MB)... this may take a while")
         
-        data = np.load(path, allow_pickle=True)
-        
-        # Restore buffer data
-        size = len(data["states"])
-        logger.info(f"Restoring {size} transitions...")
-        
-        self.states[:size] = data["states"]
-        self.next_states[:size] = data["next_states"]
-        self.actions[:size] = data["actions"]
-        self.rewards[:size] = data["rewards"]
-        self.dones[:size] = data["dones"]
-        
-        # Restore tree and metadata
-        self.tree.tree = torch.from_numpy(data["tree"])
-        self.max_priority = float(data["max_priority"])
-        self.ptr = int(data["ptr"])
-        self.full = bool(data["full"])
-        self.beta = float(data["beta"])
-        
-        logger.info(f"Loaded replay buffer ({self.size} transitions) from {path}")
+        try:
+            data = np.load(path, allow_pickle=True)
+            
+            # Restore buffer data
+            size = len(data["states"])
+            logger.info(f"Restoring {size} transitions...")
+            
+            self.states[:size] = data["states"]
+            self.next_states[:size] = data["next_states"]
+            self.actions[:size] = data["actions"]
+            self.rewards[:size] = data["rewards"]
+            self.dones[:size] = data["dones"]
+            
+            # Restore tree and metadata
+            self.tree.tree = torch.from_numpy(data["tree"])
+            self.max_priority = float(data["max_priority"])
+            self.ptr = int(data["ptr"])
+            self.full = bool(data["full"])
+            self.beta = float(data["beta"])
+            
+            logger.info(f"Loaded replay buffer ({self.size} transitions) from {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load replay buffer from {path}: {e}")
+            logger.warning("Starting with empty replay buffer")
+            return False
 
 
 class RainbowNetwork(nn.Module):
@@ -733,12 +743,13 @@ class RainbowCore:
         self.epsilon = checkpoint["epsilon"]
         self.loss_ema = checkpoint.get("loss_ema", None)
         
-        # Load replay buffer
+        # Load replay buffer (may fail if corrupted)
         replay_path = path.replace(".pt", "_replay.npz").replace(".model", "_replay.npz")
         if replay_path == path:
             replay_path = path + "_replay.npz"
         if os.path.exists(replay_path):
-            self.replay.load(replay_path)
+            if not self.replay.load(replay_path):
+                logger.warning("Replay buffer corrupted, continuing with model weights only")
         else:
             logger.warning(f"Replay buffer not found at {replay_path}, starting with empty buffer")
         
