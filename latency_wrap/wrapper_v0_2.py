@@ -2,6 +2,107 @@ import numpy as np
 import ale_py
 import base64, gzip, sys, io
 
+class BatchedLatencyModel:
+    """
+    Batched version of LatencyModel for vectorized environments.
+    Processes all environments in a single forward pass for efficiency.
+    """
+
+    def __init__(self, directory_with_weights, n_envs):
+        """
+        Initialize batched latency model.
+
+        Args:
+            directory_with_weights (str): Path to model weights directory
+            n_envs (int): Number of parallel environments
+        """
+        self.n_envs = n_envs
+
+        # Load weights once (shared across all envs)
+        self.fc_weight = np.load(f"{directory_with_weights}/fc_weight.npy")
+        self.fc_bias = np.load(f"{directory_with_weights}/fc_bias.npy")
+        self.pred_weight = np.load(f"{directory_with_weights}/pred_weight.npy")
+        self.pred_bias = np.load(f"{directory_with_weights}/pred_bias.npy")
+
+        # Separate state per environment
+        self.action_queues = []
+        self.last_actions = []
+        for _ in range(n_envs):
+            queue = [self._one_hot_encode(0, 0) for _ in range(30)]
+            self.action_queues.append(queue)
+            self.last_actions.append(0)
+
+    def _one_hot_encode(self, action, last_action):
+        """One-hot encode action and last_action into vector of length 36."""
+        vec = np.zeros(36, dtype=np.float32)
+        vec[int(action)] = 1.0
+        vec[18 + int(last_action)] = 1.0
+        return vec
+
+    def _forward_batch(self, x):
+        """
+        Batched forward pass through the MLP.
+
+        Args:
+            x (np.ndarray): Input of shape (n_envs, 30*36)
+
+        Returns:
+            np.ndarray: Logits of shape (n_envs, 18)
+        """
+        x = x @ self.fc_weight.T + self.fc_bias
+        x = np.maximum(x, 0)  # ReLU
+        x = x @ self.pred_weight.T + self.pred_bias
+        return x
+
+    def act_batch(self, actions):
+        """
+        Process all environments in one forward pass.
+
+        Args:
+            actions (np.ndarray): Array of shape (n_envs,) with action indices
+
+        Returns:
+            np.ndarray: Array of shape (n_envs,) with delayed action indices
+        """
+        # Update queues for all environments
+        for i, action in enumerate(actions):
+            action = int(action)
+            # Match LatencyModel's conditional pop behavior
+            if len(self.action_queues[i]) == 30:
+                self.action_queues[i].pop(0)
+            self.action_queues[i].append(self._one_hot_encode(action, self.last_actions[i]))
+
+        # Build batched input: (n_envs, 30*36)
+        batch_input = np.array([
+            np.array(queue).reshape(-1) for queue in self.action_queues
+        ], dtype=np.float32)
+
+        # Single batched forward pass
+        logits = self._forward_batch(batch_input)
+
+        # Softmax and argmax per environment
+        logits_max = logits.max(axis=1, keepdims=True)
+        probs = np.exp(logits - logits_max)
+        probs /= probs.sum(axis=1, keepdims=True)
+
+        sampled_actions = np.argmax(probs, axis=1)
+
+        # Update last_actions for next iteration
+        self.last_actions = sampled_actions.tolist()
+
+        return sampled_actions
+
+    def reset_env(self, env_idx):
+        """Reset a single environment's state to NOOPs."""
+        self.action_queues[env_idx] = [self._one_hot_encode(0, 0) for _ in range(30)]
+        self.last_actions[env_idx] = 0
+
+    def reset_all(self):
+        """Reset all environments to initial state."""
+        for i in range(self.n_envs):
+            self.reset_env(i)
+
+
 class LatencyModel:
     """
     Wraps Atari joystick actions with a learned model to simulate real-world latency.

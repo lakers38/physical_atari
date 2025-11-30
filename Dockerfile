@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/pytorch:25.01-py3
+FROM nvcr.io/nvidia/pytorch:25.02-py3
 
 # https://github.com/openucx/ucc/issues/476 - 'ImportError: /opt/hpcx/ucx/lib/libucs.so.0: undefined symbol: ucm_set_global_opts'
 # Workaround: Error happens because compiler picks up libucm required by libucs from a different directory,
@@ -19,7 +19,7 @@ RUN apt-get update \
     apt-get install --no-install-recommends --assume-yes \
       build-essential make gcc g++ gdb strace valgrind git clang-format \
       xauth libgl1 ffmpeg v4l-utils udev usbutils libusb-1.0-0-dev wget \
-      x11-utils x11-xserver-utils \
+      x11-utils x11-xserver-utils x11-apps \
       python3-opencv libxkbfile1 nvtop tlp
 
 # mcc daq https://github.com/mccdaq/uldaq?_ga=2.85905500.479671302.1736441555-1860231292.1736441555

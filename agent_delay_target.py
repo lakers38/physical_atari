@@ -616,7 +616,14 @@ class Agent:
         print('parameters: ', model_parameter_count(self.training_model))
 
         if self.load_file is not None:
-            self.training_model.load_state_dict(torch.load(self.load_file, weights_only=True))
+            print(f'Loading checkpoint from: {self.load_file}')
+            checkpoint = torch.load(self.load_file, weights_only=True)
+            self.training_model.load_state_dict(checkpoint)
+            print(f'Checkpoint loaded successfully! Model has {len(checkpoint)} state dict entries')
+            # Print a sample of weights to verify they're not random/zero
+            first_param_name = list(checkpoint.keys())[0]
+            first_param = checkpoint[first_param_name]
+            print(f'Sample weights from {first_param_name}: mean={first_param.float().mean():.6f}, std={first_param.float().std():.6f}')
 
         self.training_model.to(dtype=fmt)
         self.training_model.train()
