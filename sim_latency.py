@@ -138,6 +138,14 @@ def build_agent(agent_type, results_dir, seed, num_actions, total_frames, load_m
             "epsilon_start": 0.0,
             "epsilon_end": 0.0,
         },
+        "agent_r2d2": {
+            "buffer_size": 1_000_000,
+            "batch_size": 32,
+            "learning_rate": 2.5e-4,
+            "gamma": 0.99,
+            "train_start": 50_000,
+            "train_freq": 4,
+        },
     }[agent_type].copy()
 
     default_kwargs.update(extra_args)

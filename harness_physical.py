@@ -51,6 +51,8 @@ def main(args):
         from agent_dqn import Agent
     elif args.agent_type == 'agent_rainbow':
         from agent_rainbow import Agent
+    elif args.agent_type == 'agent_r2d2':
+        from agent_r2d2 import Agent
     elif args.agent_type == 'agent_random':
         from agent_random import Agent
     elif args.agent_type == 'agent_ppo':
@@ -256,6 +258,19 @@ def main(args):
                         "priority_eps": args.rainbow_priority_eps,
                         "epsilon_start": 0.0,
                         "epsilon_end": 0.0,
+                elif args.agent_type == 'agent_r2d2':
+                    agent_args = {
+                        "gpu": args.gpu,
+                        "learning_rate": args.r2d2_learning_rate,
+                        "gamma": args.r2d2_gamma,
+                        "epsilon": args.r2d2_epsilon,
+                        "hidden_dim": args.r2d2_hidden_dim,
+                        "burn_in_steps": args.r2d2_burn_in_steps,
+                        "learning_steps": args.r2d2_learning_steps,
+                        "forward_steps": args.r2d2_forward_steps,
+                        "block_length": args.r2d2_block_length,
+                        "frame_skip": args.r2d2_frame_skip,
+                        "resize_to_84": args.r2d2_resize_to_84,
                     }
                 elif args.agent_type == 'agent_ppo':
                     agent_args = {
@@ -263,6 +278,7 @@ def main(args):
                     }
                 else:
                     agent_args = {"gpu": args.gpu}
+
                 if load_model is not None:
                     agent_args["load_file"] = load_model
 
@@ -712,6 +728,32 @@ def get_argument_parser():
     parser.add_argument('--capture_frames', action='store_true', help="generate a raw movie of run")
     # REVIEW: only used for testing ale_env within the harness
     parser.add_argument('--delay_frames', type=int, default=0)
+
+    # PPO-specific configuration (used when --agent_type=agent_ppo)
+    parser.add_argument('--ppo_learning_rate', type=float, default=2.5e-4, help="PPO learning rate")
+    parser.add_argument('--ppo_n_steps', type=int, default=128, help="PPO steps per update")
+    parser.add_argument('--ppo_batch_size', type=int, default=256, help="PPO minibatch size")
+    parser.add_argument('--ppo_n_epochs', type=int, default=4, help="PPO epochs per update")
+    parser.add_argument('--ppo_gamma', type=float, default=0.99, help="PPO discount factor")
+    parser.add_argument('--ppo_gae_lambda', type=float, default=0.95, help="PPO GAE lambda")
+    parser.add_argument('--ppo_clip_range', type=float, default=0.1, help="PPO clip range")
+    parser.add_argument('--ppo_ent_coef', type=float, default=0.01, help="PPO entropy coefficient")
+    parser.add_argument('--ppo_vf_coef', type=float, default=0.5, help="PPO value function coefficient")
+    parser.add_argument('--ppo_max_grad_norm', type=float, default=0.5, help="PPO max gradient norm")
+    parser.add_argument('--ppo_frame_skip', type=int, default=4, help="PPO frame skip (agent acts every N frames)")
+    parser.add_argument('--ppo_resize_to_84', type=int, default=1, choices=[0, 1], help="PPO resize to 84x84 (1=yes, 0=no)")
+
+    # R2D2-specific configuration (used when --agent_type=agent_r2d2)
+    parser.add_argument('--r2d2_learning_rate', type=float, default=1e-4, help="R2D2 learning rate")
+    parser.add_argument('--r2d2_gamma', type=float, default=0.997, help="R2D2 discount factor")
+    parser.add_argument('--r2d2_epsilon', type=float, default=0.01, help="R2D2 epsilon for exploration")
+    parser.add_argument('--r2d2_hidden_dim', type=int, default=512, help="R2D2 LSTM hidden dimension")
+    parser.add_argument('--r2d2_burn_in_steps', type=int, default=40, help="R2D2 LSTM burn-in steps")
+    parser.add_argument('--r2d2_learning_steps', type=int, default=80, help="R2D2 learning steps per sequence")
+    parser.add_argument('--r2d2_forward_steps', type=int, default=5, help="R2D2 n-step return lookahead")
+    parser.add_argument('--r2d2_block_length', type=int, default=120, help="R2D2 block length (burn_in + learning)")
+    parser.add_argument('--r2d2_frame_skip', type=int, default=4, help="R2D2 frame skip (agent acts every N frames)")
+    parser.add_argument('--r2d2_resize_to_84', type=int, default=1, choices=[0, 1], help="R2D2 resize to 84x84 (1=yes, 0=no)")
     return parser
 
 
