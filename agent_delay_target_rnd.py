@@ -1,4 +1,5 @@
 # Copyright 2025 Keen Technologies, Inc.
+# Modified to add RND (Random Network Distillation) intrinsic motivation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,31 +13,77 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# agent_delay_target.py
+# agent_delay_target_rnd.py
 #
-# Use the last evaluations for target calculation instead of a target model evaluation
+# agent_delay_target + RND (Random Network Distillation) for intrinsic motivation
+# RND provides curiosity-driven exploration bonuses for novel states
+
+from __future__ import annotations
+
 import argparse
 import copy
 import math
 import os
 import sys
 import time
+from collections import deque
+from typing import Deque, Dict, Iterable, List, Optional, Tuple
 
+import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from ale_py import Action, ALEInterface, LoggerMode, roms
 from pynvml import *
-from tqdm import tqdm
+
+from vector_agents import VectorAgent
 
 try:
     import wandb
 except ImportError:
     wandb = None
 
+from tqdm import tqdm
 
-def train_function(
+
+class RNDNetwork(nn.Module):
+    """
+    Small CNN for RND target/predictor networks.
+    Takes normalized observation stacks and outputs a feature vector.
+    Pre-computes FC layer size for CUDA graph compatibility.
+    """
+    def __init__(self, input_channels, feature_dim=512, input_height=128, input_width=128):
+        super().__init__()
+        # Simple CNN that progressively downsamples
+        self.conv = nn.Sequential(
+            nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),
+            nn.LeakyReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.LeakyReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=2),
+            nn.LeakyReLU(),
+        )
+        self.feature_dim = feature_dim
+        
+        # Pre-compute conv output size for CUDA graph compatibility
+        with torch.no_grad():
+            dummy = torch.zeros(1, input_channels, input_height, input_width)
+            conv_out = self.conv(dummy)
+            self._conv_out_size = conv_out.view(1, -1).size(1)
+        
+        # Initialize FC layer upfront (required for CUDA graphs)
+        self.fc = nn.Linear(self._conv_out_size, feature_dim)
+        nn.init.orthogonal_(self.fc.weight, gain=np.sqrt(2))
+        nn.init.zeros_(self.fc.bias)
+
+    def forward(self, x):
+        conv_out = self.conv(x)
+        conv_out = conv_out.view(conv_out.size(0), -1)
+        return self.fc(conv_out)
+
+
+def train_function_rnd(
     # constants
     input_stack,
     train_batch,
@@ -55,6 +102,9 @@ def train_function(
     use_weight_norm,
     reward_discounts,
     value_discounts,
+    # RND constants
+    intrinsic_reward_scale,
+    rnd_update_proportion,
     # variable inputs
     new_observations,
     tensor_u,
@@ -73,11 +123,18 @@ def train_function(
     train_loss_ema,
     avg_error_ema,
     max_error_ema,
+    # RND outputs
+    intrinsic_reward_ema,
+    rnd_loss_ema,
     # updated models
     optimizer,
     linear_optimizer,
     training_model,
     anchor_model,
+    # RND models
+    rnd_target,
+    rnd_predictor,
+    rnd_optimizer,
 ):
     with torch.no_grad():
         # pull some constants from tensor dimensions
@@ -136,12 +193,31 @@ def train_function(
 
         state_value_buffer[buffer_indexes] = all_v
 
-        # set selected_action_index
+        # set selected_action_index IMMEDIATELY after model forward (before RND)
         # softmax-greedy policy
         sample = torch.multinomial(probs[0], num_samples=1)
         selected_action_index.copy_(sample[0])
 
         # The main code can now return the action while training goes on in the background
+
+    # ===== RND: Compute intrinsic rewards (AFTER action selection) =====
+    # Get target features (frozen, no grad needed)
+    with torch.no_grad():
+        rnd_target_features = rnd_target(observation_stacks)
+    
+    # Get predictor features WITH gradients (will be used for training later)
+    rnd_predictor_features = rnd_predictor(observation_stacks.detach())
+    
+    with torch.no_grad():
+        # Intrinsic reward = prediction error (MSE per sample)
+        intrinsic_rewards = (rnd_target_features - rnd_predictor_features.detach()).pow(2).mean(dim=1)
+        
+        # Normalize intrinsic rewards by running mean (helps stability)
+        current_intrinsic_mean = intrinsic_rewards.mean()
+        torch.lerp(intrinsic_reward_ema, current_intrinsic_mean, 2**ema_log2, out=intrinsic_reward_ema)
+        
+        # Normalize by EMA (avoid division by zero)
+        normalized_intrinsic = intrinsic_rewards / (intrinsic_reward_ema + 1e-8)
 
         # the next frame_skip frames will use this selected_action_index
         num_distributions = distribution_factor_buffer.shape[1]
@@ -169,7 +245,10 @@ def train_function(
         blended_rewards = observed_rewards @ reward_discounts
         blended_states = state_values @ value_discounts
 
-        return_targets = blended_rewards + blended_states
+        # ===== RND: Add intrinsic rewards to return targets =====
+        # The intrinsic reward is for the sampled observations, add it to their targets
+        # normalized_intrinsic is (train_batch,), unsqueeze to (train_batch, 1) to match blended_rewards shape
+        return_targets = blended_rewards + blended_states + intrinsic_reward_scale * normalized_intrinsic.unsqueeze(1)
 
         # collect statistics on average targets for the IID samples
         torch.lerp(target_ema, return_targets[online_batch:].mean(), 2**ema_log2, out=target_ema)
@@ -232,6 +311,21 @@ def train_function(
                     p /= norms.view(-1, 1, 1, 1)
 
     train_loss.copy_(loss.detach())
+
+    # ===== RND: Train the predictor network =====
+    # Reuse predictor features computed earlier (already has gradients)
+    # RND loss: predict target features
+    rnd_loss = F.mse_loss(rnd_predictor_features, rnd_target_features.detach())
+    
+    # Scale by update proportion and zero out before min_train_frames (CUDA graph compatible)
+    rnd_loss = rnd_loss * rnd_update_proportion * (tensor_u > min_train_frames)
+    
+    rnd_optimizer.zero_grad()
+    rnd_loss.backward()
+    rnd_optimizer.step()
+    
+    # Track RND loss
+    torch.lerp(rnd_loss_ema, rnd_loss.detach(), 2**ema_log2, out=rnd_loss_ema)
 
 
 class OddPooled(nn.Module):
@@ -463,9 +557,15 @@ class Agent:
         # should be strictly a performance optimization, with no behavior change
         self.use_cuda_graphs = True  # faster with graphs, but you can't debug them
 
+        # ===== RND hyperparameters =====
+        self.intrinsic_reward_scale = 0.01  # Scale factor for intrinsic rewards
+        self.rnd_feature_dim = 512  # Output dimension of RND networks
+        self.rnd_lr = 1e-4  # Learning rate for RND predictor
+        self.rnd_update_proportion = 0.25  # Proportion of batches to train RND on (for stability)
+
         # dynamically override configuration
         for key, value in kwargs.items():
-            assert hasattr(self, key)
+            assert hasattr(self, key), f"Unknown parameter: {key}"
             setattr(self, key, value)
 
         self.dev = f'cuda:{self.gpu}'
@@ -526,6 +626,10 @@ class Agent:
 
         # the model values are what comes directly out of the model final layer
         self.target_ema = torch.tensor(1.0)
+
+        # ===== RND statistics =====
+        self.intrinsic_reward_ema = torch.tensor(1.0)  # Running mean of intrinsic rewards
+        self.rnd_loss_ema = torch.tensor(0.0)  # Running mean of RND loss
 
         # start at 3 so the previous four steps can be referenced without going negative
         self.u = self.frame_skip - 1
@@ -669,11 +773,47 @@ class Agent:
         )
         self.linear_optimizer = torch.optim.SGD(final_parms, lr=2**self.lr_log2, momentum=self.momentum)
 
+        # ===== RND Networks =====
+        print("Initializing RND networks...")
+        
+        # Target network: random, frozen
+        self.rnd_target = RNDNetwork(
+            self.input_channels, self.rnd_feature_dim,
+            input_height=self.obs_height, input_width=self.obs_width
+        )
+        self.rnd_target.to(dtype=fmt)  # Match training model dtype
+        self.rnd_target.eval()
+        for param in self.rnd_target.parameters():
+            param.requires_grad = False
+        
+        # Predictor network: trained to match target
+        self.rnd_predictor = RNDNetwork(
+            self.input_channels, self.rnd_feature_dim,
+            input_height=self.obs_height, input_width=self.obs_width
+        )
+        self.rnd_predictor.to(dtype=fmt)  # Match training model dtype
+        self.rnd_predictor.train()
+        
+        print(f'RND target parameters: {model_parameter_count(self.rnd_target)}')
+        print(f'RND predictor parameters: {model_parameter_count(self.rnd_predictor)}')
+        
+        # RND optimizer (capturable for CUDA graphs)
+        self.rnd_optimizer = torch.optim.AdamW(
+            self.rnd_predictor.parameters(),
+            lr=self.rnd_lr,
+            capturable=True,
+        )
+
+        # Convert RND constants to tensors for CUDA graph
+        self.intrinsic_reward_scale_tensor = torch.tensor(self.intrinsic_reward_scale)
+        self.rnd_update_proportion_tensor = torch.tensor(self.rnd_update_proportion)
+
         self.spin_stream = torch.cuda.Stream(priority=0)
 
         self.train_stream = torch.cuda.Stream(priority=0)
+        
         self.train_graph = cuda_graph_wrapper(
-            train_function,
+            train_function_rnd,
             self.train_stream,
             self.use_cuda_graphs,
             [
@@ -695,6 +835,9 @@ class Agent:
                 self.use_weight_norm,
                 self.reward_discounts,
                 self.value_discounts,
+                # RND constants
+                self.intrinsic_reward_scale_tensor,
+                self.rnd_update_proportion_tensor,
                 # variable state
                 self.new_observations,
                 self.tensor_u,
@@ -713,11 +856,18 @@ class Agent:
                 self.train_loss_ema,
                 self.avg_error_ema,
                 self.max_error_ema,
+                # RND outputs
+                self.intrinsic_reward_ema,
+                self.rnd_loss_ema,
                 # updated models
                 self.optimizer,
                 self.linear_optimizer,
                 self.training_model,
                 self.anchor_model,
+                # RND models
+                self.rnd_target,
+                self.rnd_predictor,
+                self.rnd_optimizer,
             ],
         )
 
@@ -767,6 +917,9 @@ class Agent:
             self.train_losses.append(self.avg_error_ema.item())
             self.train_losses.append(self.max_error_ema.item())
             self.train_losses.append(self.target_ema.item())
+            # Add RND stats
+            self.train_losses.append(self.intrinsic_reward_ema.item())
+            self.train_losses.append(self.rnd_loss_ema.item())
 
         self.train_graph()
         torch.cuda.nvtx.range_pop()
@@ -781,14 +934,523 @@ class Agent:
                 spins += 1
             # Debug: print spin count every 1000 frames to check timing
             if self.u % 4000 == 0:
-                print(f"[DelayTarget] frame={self.u}, spins={spins}, spin_time={spins * 0.1:.1f}ms")
+                print(f"[RND] frame={self.u}, spins={spins}, spin_time={spins * 0.1:.1f}ms")
         torch.cuda.nvtx.range_pop()
         # the rest of training will continue in the background
 
         return self.selected_action_index.item()
 
     def save_model(self, filename):
-        torch.save(self.training_model.state_dict(), filename)
+        torch.save({
+            'training_model': self.training_model.state_dict(),
+            'rnd_predictor': self.rnd_predictor.state_dict(),
+            'rnd_target': self.rnd_target.state_dict(),
+        }, filename)
+
+    def load_model(self, filename):
+        checkpoint = torch.load(filename, weights_only=True)
+        self.training_model.load_state_dict(checkpoint['training_model'])
+        if 'rnd_predictor' in checkpoint:
+            self.rnd_predictor.load_state_dict(checkpoint['rnd_predictor'])
+        if 'rnd_target' in checkpoint:
+            self.rnd_target.load_state_dict(checkpoint['rnd_target'])
+
+
+# --------------------------------
+# Vectorized Core and Agent for multi-environment training
+# --------------------------------
+
+
+def preprocess_batch(obs_batch: np.ndarray, height: int = 84, width: int = 84) -> np.ndarray:
+    """Preprocess a batch of observations to grayscale and resize."""
+    num_envs = obs_batch.shape[0]
+    # Fast path: already grayscale and correctly sized
+    if obs_batch.ndim == 3 and obs_batch.shape[1] == height and obs_batch.shape[2] == width:
+        return obs_batch.astype(np.uint8, copy=False)
+
+    processed = np.zeros((num_envs, height, width), dtype=np.uint8)
+    for i in range(num_envs):
+        frame = obs_batch[i]
+        if frame.ndim == 3 and frame.shape[-1] == 3:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        elif frame.ndim == 2:
+            pass
+        else:
+            raise ValueError(f"Unexpected observation shape: {frame.shape}")
+
+        if frame.shape[0] != height or frame.shape[1] != width:
+            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        processed[i] = frame
+    return processed
+
+
+class RingBuffer:
+    """
+    Ring buffer matching original agent_delay_target structure.
+    Stores observations, rewards, episodes, actions, and computed state values.
+    """
+    def __init__(self, capacity: int, obs_channels: int, obs_height: int, obs_width: int, num_actions: int):
+        self.capacity = capacity
+        self.obs_channels = obs_channels
+        self.obs_height = obs_height
+        self.obs_width = obs_width
+        
+        # Observation ring buffer (like original)
+        self.observations = np.zeros((capacity, obs_channels, obs_height, obs_width), dtype=np.uint8)
+        # Per-frame buffers
+        self.rewards = np.zeros(capacity, dtype=np.float32)
+        self.episodes = np.zeros(capacity, dtype=np.int64)
+        self.state_values = np.zeros(capacity, dtype=np.float32)
+        self.actions = np.zeros(capacity, dtype=np.int64)
+        # Distribution factors: one-hot of action taken (num_actions + 1 for state value output)
+        self.distribution_factors = np.zeros((capacity, num_actions + 1), dtype=np.float32)
+        
+        self.ptr = 0
+        self.size = 0
+    
+    def add(self, obs: np.ndarray, reward: float, episode_id: int, action: int, num_distributions: int) -> int:
+        """Add a frame and return its index."""
+        idx = self.ptr
+        self.observations[idx] = obs
+        self.rewards[idx] = reward
+        self.episodes[idx] = episode_id
+        self.actions[idx] = action
+        # One-hot encode the action
+        self.distribution_factors[idx] = 0.0
+        self.distribution_factors[idx, action] = 1.0
+        self.state_values[idx] = 0.0
+        
+        self.ptr = (self.ptr + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
+        return idx
+
+
+class DelayTargetRNDCore:
+    """
+    Vectorized core for Delay Target + RND agent.
+    Exact match to original algorithm, just vectorized with RND added.
+    """
+    def __init__(
+        self,
+        *,
+        num_envs: int,
+        seed: int,
+        num_actions: int,
+        total_frames: int,
+        # Observation params
+        stack_size: int = 4,
+        obs_height: int = 84,
+        obs_width: int = 84,
+        # Buffer/training params
+        buffer_size: int = 200_000,
+        batch_size: int = 32,
+        train_start: int = 1000,
+        train_freq: int = 4,
+        # Original algorithm params
+        gamma: float = 0.9975,  # reward_discount in original
+        td_lambda: float = 0.95,
+        multisteps_max: int = 64,
+        temperature_log2: float = -7,
+        ema_log2: float = -10,  # ~0.001
+        base_lr_log2: float = -16,
+        lr_log2: float = -18,
+        # Network params
+        base_width: int = 80,
+        use_biases: int = 0,
+        use_dirac: int = 1,
+        kernel_size: int = 3,
+        use_model: int = 2,
+        # RND params
+        intrinsic_reward_scale: float = 0.1,
+        rnd_feature_dim: int = 512,
+        rnd_lr: float = 1e-4,
+        rnd_update_proportion: float = 0.25,
+        # Misc
+        data_dir: Optional[str] = None,
+        load_file: Optional[str] = None,
+        gpu: int = 0,
+    ):
+        self.num_envs = num_envs
+        self.num_actions = num_actions
+        self.total_frames = total_frames
+        self.stack_size = stack_size
+        self.obs_height = obs_height
+        self.obs_width = obs_width
+        self.buffer_size = buffer_size
+        self.batch_size = batch_size
+        self.train_start = train_start
+        self.train_freq = train_freq
+        self.gamma = gamma
+        self.td_lambda = td_lambda
+        self.multisteps_max = multisteps_max
+        self.temperature_log2 = temperature_log2
+        self.ema_log2 = ema_log2
+        self.intrinsic_reward_scale = intrinsic_reward_scale
+        self.rnd_update_proportion = rnd_update_proportion
+
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+        # Device
+        if torch.cuda.is_available() and gpu >= 0:
+            self.device = torch.device(f'cuda:{gpu}')
+            torch.cuda.manual_seed_all(seed)
+        else:
+            self.device = torch.device('cpu')
+        print(f"DelayTargetRNDCore: device={self.device}")
+
+        self.num_distributions = num_actions + 1
+
+        # Ring buffer (matching original structure)
+        self.ring = RingBuffer(buffer_size, 1, obs_height, obs_width, num_actions)
+
+        # Per-frame state stacks for each env
+        self.state_stacks = np.zeros((num_envs, stack_size, obs_height, obs_width), dtype=np.uint8)
+        self.last_actions = np.full(num_envs, 0, dtype=np.int64)
+        self.episode_ids = np.zeros(num_envs, dtype=np.int64)
+
+        # Precompute TD-lambda weights (matching original)
+        reward_discounts = np.zeros(multisteps_max, dtype=np.float32)
+        value_discounts = np.zeros(multisteps_max, dtype=np.float32)
+        total = 0.0
+        for step in range(1, multisteps_max):
+            factor = td_lambda ** (step - 1)
+            total += factor
+            value_discounts[step] = factor * (gamma ** step)
+            for n in range(step):
+                reward_discounts[n] += factor * (gamma ** n)
+        self.reward_discounts = torch.from_numpy(reward_discounts / total).to(self.device).unsqueeze(1)
+        self.value_discounts = torch.from_numpy(value_discounts / total).to(self.device).unsqueeze(1)
+
+        # Network
+        if use_model >= 1:
+            self.network = OddPooled(
+                (1, stack_size, obs_height, obs_width),
+                base_width, self.num_distributions,
+                use_biases=use_biases, dirac=use_dirac,
+                kernel_size=kernel_size, weighting=(use_model - 1),
+            ).to(self.device)
+        else:
+            self.network = Pooled(
+                (1, stack_size, obs_height, obs_width),
+                base_width, self.num_distributions,
+                use_biases=use_biases, dirac=use_dirac, kernel_size=kernel_size,
+            ).to(self.device)
+        print(f"Network params: {model_parameter_count(self.network)}")
+
+        # Optimizers (matching original: AdamW for conv, SGD for linear)
+        parms = list(self.network.parameters())
+        final_parms = parms[-1:] if not use_biases else parms[-2:]
+        initial_parms = parms[:-1] if not use_biases else parms[:-2]
+        self.optimizer = torch.optim.AdamW(initial_parms, lr=2**base_lr_log2)
+        self.linear_optimizer = torch.optim.SGD(final_parms, lr=2**lr_log2, momentum=0.9)
+
+        # RND networks
+        self.rnd_target = RNDNetwork(stack_size, rnd_feature_dim).to(self.device)
+        self.rnd_target.eval()
+        for p in self.rnd_target.parameters():
+            p.requires_grad = False
+        self.rnd_predictor = RNDNetwork(stack_size, rnd_feature_dim).to(self.device)
+        # Init RND
+        with torch.no_grad():
+            dummy = torch.zeros(1, stack_size, obs_height, obs_width, device=self.device)
+            self.rnd_target(dummy)
+            self.rnd_predictor(dummy)
+        self.rnd_optimizer = torch.optim.Adam(self.rnd_predictor.parameters(), lr=rnd_lr)
+        print(f"RND params: target={model_parameter_count(self.rnd_target)}, predictor={model_parameter_count(self.rnd_predictor)}")
+
+        # Stats (matching original)
+        self.frame_count = 0
+        self.avg_error_ema = 10.0
+        self.max_error_ema = 0.0
+        self.loss_ema = 0.0
+        self.target_ema = 1.0
+        self.intrinsic_reward_ema = 1.0
+        self.rnd_loss_ema = 0.0
+        self.last_loss = 0.0
+        self.last_avg_q = 0.0
+        self.last_max_q = 0.0
+
+        self.data_dir = data_dir or os.getcwd()
+        if load_file and os.path.exists(load_file):
+            self.load_model(load_file)
+
+    def reset(self, observations: np.ndarray) -> None:
+        processed = preprocess_batch(observations, self.obs_height, self.obs_width)
+        for env in range(self.num_envs):
+            self.state_stacks[env] = np.repeat(processed[env][None, ...], self.stack_size, axis=0)
+
+    def act(self, observations: np.ndarray) -> np.ndarray:
+        processed = preprocess_batch(observations, self.obs_height, self.obs_width)
+        # Roll and add new frame
+        self.state_stacks = np.roll(self.state_stacks, -1, axis=1)
+        self.state_stacks[:, -1] = processed
+
+        stacked = torch.from_numpy(self.state_stacks).to(self.device, dtype=torch.float32) / 255.0
+        with torch.no_grad():
+            out = self.network(stacked)
+            q = out[:, :-1]
+            # Softmax policy (matching original)
+            temp = self.avg_error_ema * (2 ** self.temperature_log2)
+            probs = F.softmax(q / max(temp, 1e-8), dim=1)
+            self.last_avg_q = q.mean().item()
+            self.last_max_q = q.max().item()
+
+        actions = torch.multinomial(probs, 1).squeeze(1).cpu().numpy()
+        self.last_actions = actions.copy()
+        return actions
+
+    def observe(self, next_obs: np.ndarray, rewards: np.ndarray,
+                terminations: np.ndarray, truncations: np.ndarray) -> None:
+        processed = preprocess_batch(next_obs, self.obs_height, self.obs_width)
+        for env in range(self.num_envs):
+            # Store frame in ring buffer
+            self.ring.add(
+                self.state_stacks[env, -1:],  # Just the latest frame
+                rewards[env],
+                self.episode_ids[env],
+                self.last_actions[env],
+                self.num_distributions,
+            )
+            done = terminations[env] or truncations[env]
+            if done:
+                self.episode_ids[env] += 1
+                self.state_stacks[env] = np.repeat(processed[env][None, ...], self.stack_size, axis=0)
+        self.frame_count += self.num_envs
+
+    def train_step(self) -> None:
+        if self.ring.size < max(self.train_start, self.batch_size + self.multisteps_max + self.stack_size):
+            return
+        if self.frame_count % self.train_freq != 0:
+            return
+
+        # Sample indices (leave room for stack and multistep)
+        max_idx = self.ring.size - self.multisteps_max
+        min_idx = self.stack_size
+        if max_idx <= min_idx:
+            return
+        indices = np.random.randint(min_idx, max_idx, size=self.batch_size)
+
+        # Build observation stacks from ring buffer
+        stack_indices = indices[:, None] + np.arange(-self.stack_size + 1, 1)[None, :]
+        stack_indices = stack_indices % self.ring.capacity
+        obs_stacks = self.ring.observations[stack_indices].squeeze(2)  # (batch, stack, H, W)
+        states = torch.from_numpy(obs_stacks).to(self.device, dtype=torch.float32) / 255.0
+
+        # Forward pass
+        outputs = self.network(states)
+        q_values = outputs[:, :-1]
+
+        # Compute V = sum(softmax(Q) * Q)
+        with torch.no_grad():
+            temp = self.avg_error_ema * (2 ** self.temperature_log2)
+            probs = F.softmax(q_values.detach() / max(temp, 1e-8), dim=1)
+            state_values = (q_values.detach() * probs).sum(dim=1)
+            # Store state values back
+            self.ring.state_values[indices] = state_values.cpu().numpy()
+
+            # RND intrinsic reward
+            rnd_target_feat = self.rnd_target(states)
+        rnd_pred_feat = self.rnd_predictor(states)
+
+        with torch.no_grad():
+            intrinsic = (rnd_target_feat - rnd_pred_feat.detach()).pow(2).mean(dim=1)
+            self.intrinsic_reward_ema += (2 ** self.ema_log2) * (intrinsic.mean().item() - self.intrinsic_reward_ema)
+            norm_intrinsic = intrinsic / (self.intrinsic_reward_ema + 1e-8)
+
+            # TD-lambda targets
+            reward_idx = indices[:, None] + np.arange(self.multisteps_max)[None, :]
+            reward_idx = reward_idx % self.ring.capacity
+            obs_rewards = torch.from_numpy(self.ring.rewards[reward_idx]).to(self.device)
+            obs_values = torch.from_numpy(self.ring.state_values[reward_idx]).to(self.device)
+
+            # Mask by episode
+            init_eps = self.ring.episodes[indices]
+            eps = self.ring.episodes[reward_idx]
+            mask = torch.from_numpy((eps == init_eps[:, None]).astype(np.float32)).to(self.device)
+            obs_rewards = obs_rewards * mask
+            obs_values = obs_values * mask
+
+            blended_r = obs_rewards @ self.reward_discounts
+            blended_v = obs_values @ self.value_discounts
+            targets = blended_r.squeeze(-1) + blended_v.squeeze(-1) + self.intrinsic_reward_scale * norm_intrinsic
+
+            # Action factors
+            actions = self.ring.actions[indices]
+            factors = torch.zeros(self.batch_size, self.num_distributions, device=self.device)
+            factors[np.arange(self.batch_size), actions] = 1.0
+
+            targets_expanded = targets.unsqueeze(1).expand(-1, self.num_distributions)
+
+        # Loss
+        loss_ind = F.mse_loss(outputs, targets_expanded, reduction='none') * factors
+        loss = loss_ind.sum() / max(factors.sum(), 1.0)
+
+        self.optimizer.zero_grad()
+        self.linear_optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.linear_optimizer.step()
+
+        # RND loss
+        rnd_loss = F.mse_loss(rnd_pred_feat, rnd_target_feat.detach()) * self.rnd_update_proportion
+        self.rnd_optimizer.zero_grad()
+        rnd_loss.backward()
+        self.rnd_optimizer.step()
+
+        # Stats
+        ema = 2 ** self.ema_log2
+        avg_err = loss_ind.sqrt().mean().item()
+        max_err = loss_ind.sqrt().max().item()
+        self.loss_ema += ema * (loss.item() - self.loss_ema)
+        self.avg_error_ema += ema * (avg_err - self.avg_error_ema)
+        self.max_error_ema += ema * (max_err - self.max_error_ema)
+        self.target_ema += ema * (targets.mean().item() - self.target_ema)
+        self.rnd_loss_ema += ema * (rnd_loss.item() - self.rnd_loss_ema)
+        self.last_loss = loss.item()
+
+    def save_model(self, path: str) -> None:
+        torch.save({
+            'network': self.network.state_dict(),
+            'rnd_predictor': self.rnd_predictor.state_dict(),
+            'rnd_target': self.rnd_target.state_dict(),
+            'frame_count': self.frame_count,
+            'avg_error_ema': self.avg_error_ema,
+            'intrinsic_reward_ema': self.intrinsic_reward_ema,
+        }, path)
+
+    def load_model(self, path: str) -> None:
+        ckpt = torch.load(path, map_location=self.device, weights_only=True)
+        self.network.load_state_dict(ckpt.get('network', ckpt.get('training_model')))
+        if 'rnd_predictor' in ckpt:
+            self.rnd_predictor.load_state_dict(ckpt['rnd_predictor'])
+        if 'rnd_target' in ckpt:
+            self.rnd_target.load_state_dict(ckpt['rnd_target'])
+        self.frame_count = ckpt.get('frame_count', 0)
+        self.avg_error_ema = ckpt.get('avg_error_ema', 10.0)
+        self.intrinsic_reward_ema = ckpt.get('intrinsic_reward_ema', 1.0)
+
+
+class VectorDelayTargetRNDAgent(VectorAgent):
+    """
+    Vectorized Delay Target + RND agent implementing the VectorAgent protocol.
+    Wraps DelayTargetRNDCore for multi-environment training.
+    """
+    def __init__(
+        self,
+        *,
+        num_envs: int,
+        seed: int,
+        num_actions: int,
+        results_dir: Optional[str] = None,
+        total_frames: int = 1_000_000,
+        **kwargs,
+    ):
+        self.core = DelayTargetRNDCore(
+            num_envs=num_envs,
+            seed=seed,
+            num_actions=num_actions,
+            total_frames=total_frames,
+            data_dir=results_dir,
+            **kwargs,
+        )
+        self.num_envs = num_envs
+        self._initialized = False
+
+    def reset(self, num_envs: int) -> None:
+        if num_envs != self.num_envs:
+            raise ValueError(f"VectorDelayTargetRNDAgent initialized for {self.num_envs} envs; received {num_envs}.")
+        self._initialized = False
+
+    def act(self, observations: np.ndarray) -> np.ndarray:
+        if not self._initialized:
+            self.core.reset(observations)
+            self._initialized = True
+        return self.core.act(observations)
+
+    def observe(
+        self,
+        next_observations: np.ndarray,
+        rewards: np.ndarray,
+        terminations: np.ndarray,
+        truncations: np.ndarray,
+        infos: Iterable[Dict],
+    ) -> None:
+        self.core.observe(next_observations, rewards, terminations, truncations)
+
+    def train_step(self) -> None:
+        self.core.train_step()
+
+    def save_model(self, path: str) -> None:
+        self.core.save_model(path)
+
+    def load_model(self, path: str) -> None:
+        self.core.load_model(path)
+
+
+class SingleEnvDelayTargetRNDAgent(VectorAgent):
+    """
+    Single-environment wrapper using the original CUDA-graph Agent.
+    Much faster than vectorized version (~600+ SPS vs ~100 SPS).
+    Use with num_envs=1 in sim_latency_vec.py.
+    """
+    def __init__(
+        self,
+        *,
+        num_envs: int,
+        seed: int,
+        num_actions: int,
+        results_dir: Optional[str] = None,
+        total_frames: int = 1_000_000,
+        **kwargs,
+    ):
+        if num_envs != 1:
+            raise ValueError(f"SingleEnvDelayTargetRNDAgent only supports num_envs=1, got {num_envs}")
+        
+        self.agent = Agent(
+            data_dir=results_dir or './results',
+            seed=seed,
+            num_actions=num_actions,
+            total_frames=total_frames,
+            **kwargs,
+        )
+        self.num_envs = 1
+        self._last_reward = 0.0
+        self._last_done = False
+
+    def reset(self, num_envs: int) -> None:
+        if num_envs != 1:
+            raise ValueError(f"SingleEnvDelayTargetRNDAgent only supports num_envs=1, got {num_envs}")
+
+    def act(self, observations: np.ndarray) -> np.ndarray:
+        # observations is (1, H, W) or (1, H, W, C)
+        obs = observations[0]
+        if obs.ndim == 2:
+            # Grayscale, need to expand to RGB for original agent
+            obs = np.stack([obs, obs, obs], axis=-1)
+        action = self.agent.frame(obs, self._last_reward, 1 if self._last_done else 0)
+        return np.array([action], dtype=np.int64)
+
+    def observe(
+        self,
+        next_observations: np.ndarray,
+        rewards: np.ndarray,
+        terminations: np.ndarray,
+        truncations: np.ndarray,
+        infos: Iterable[Dict],
+    ) -> None:
+        self._last_reward = float(rewards[0])
+        self._last_done = bool(terminations[0] or truncations[0])
+
+    def train_step(self) -> None:
+        # Training happens inside agent.frame() via CUDA graph
+        pass
+
+    def save_model(self, path: str) -> None:
+        self.agent.save_model(path)
+
+    def load_model(self, path: str) -> None:
+        self.agent.load_model(path)
 
 
 # --------------------------------
@@ -797,16 +1459,17 @@ class Agent:
 # This file can be run directly to experiment in simulator, or imported by the physical harness.
 # --------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Delay Target Agent")
+    parser = argparse.ArgumentParser(description="Delay Target RND Agent")
     parser.add_argument("rank", type=int, nargs="?", default=0, help="GPU rank")
     parser.add_argument("mode", type=str, nargs="?", default="default", help="atari100k, physical, or default")
     parser.add_argument("--wandb", action="store_true", help="Enable wandb logging")
-    parser.add_argument("--wandb_project", type=str, default="delay-target", help="Wandb project name")
+    parser.add_argument("--wandb_project", type=str, default="delay-target-rnd", help="Wandb project name")
     parser.add_argument("--wandb_entity", type=str, default=None, help="Wandb entity")
     parser.add_argument("--wandb_run_name", type=str, default=None, help="Wandb run name")
     parser.add_argument("--game", type=str, default=None, help="Override game (e.g. ms_pacman)")
     parser.add_argument("--total_frames", type=int, default=None, help="Override total frames")
     parser.add_argument("--results_dir", type=str, default="./results", help="Results directory")
+    parser.add_argument("--load", type=str, default=None, help="Path to checkpoint to resume from")
     args = parser.parse_args()
 
     data_dir = args.results_dir
@@ -815,13 +1478,6 @@ def main():
     save_model = True
     save_incremental_models = True
     last_model_save = -1
-
-    # phoenix in particular has the opportunity to hide in a corner from the boss fight and never collect any rewards, so
-    # restarting after a certain number of steps keeps learning going.
-    #
-    # "Revisiting the ALE" recommends a max episode frames (60fps) of 18_000, which is only five minutes, which would cut short many
-    # valid high performing games.
-    # "Is Deep Reinforcement Learning Really Superhuman on Atari?" https://arxiv.org/pdf/1908.04683 recommends 18k limit without a reward.
     max_frames_without_reward = 18_000
 
     ale = ALEInterface()
@@ -829,47 +1485,24 @@ def main():
     ale.setInt('random_seed', 0)
 
     lives_as_episodes = 1
-
     rank = args.rank
 
     parms = {}
     parms['gpu'] = rank % 8
 
-    frame_skip = 4  # number of times an action is repeated in the environment
+    frame_skip = 4
     parms['frame_skip'] = frame_skip
 
     if args.mode == 'atari100k':
         atari100k_list = [
-            'assault',
-            'asterix',
-            'bank_heist',
-            'battle_zone',
-            'boxing',
-            'breakout',
-            'chopper_command',
-            'crazy_climber',
-            'demon_attack',
-            'freeway',
-            'frostbite',
-            'gopher',
-            'hero',
-            'jamesbond',
-            'kangaroo',
-            'krull',
-            'kung_fu_master',
-            'ms_pacman',
-            'pong',
-            'private_eye',
-            'qbert',
-            'road_runner',
-            'seaquest',
-            'up_n_down',
+            'assault', 'asterix', 'bank_heist', 'battle_zone', 'boxing', 'breakout',
+            'chopper_command', 'crazy_climber', 'demon_attack', 'freeway', 'frostbite',
+            'gopher', 'hero', 'jamesbond', 'kangaroo', 'krull', 'kung_fu_master',
+            'ms_pacman', 'pong', 'private_eye', 'qbert', 'road_runner', 'seaquest', 'up_n_down',
         ]
         game = atari100k_list[rank % 24]
         seed = rank // 24
-        total_frames = 1_000_000  # real atari100k is only 400_000, but training longer is helpful
-
-        # run without sticky actions, which should give slightly better scores, because the models don't need to deal with any randomness
+        total_frames = 1_000_000
         ale.setFloat('repeat_action_probability', 0.0)
         reduce_action_set = 1
         delay_frames = 0
@@ -885,34 +1518,23 @@ def main():
         parms['lr_log2'] = -18
         parms['base_lr_log2'] = -16
         seed = (rank // 8) % 4
-
-        reduce_action_set = (
-            2  # 0 = always 18, 1 = ALE minimum action set, 2 = restricted even more for ms_pacman and qbert
-        )
-        delay_frames = 6  # 60 fps frames to delay commands to simulate real world latency
+        reduce_action_set = 2
+        delay_frames = 6
     else:
-        reduce_action_set = (
-            2  # 0 = always 18, 1 = ALE minimum action set, 2 = restricted even more for ms_pacman and qbert
-        )
-        total_frames = 8_000_000
-        parms['lr_log2'] = -17  # -18 + rank//4
-        parms['base_lr_log2'] = -15  # -18 + rank%4
+        reduce_action_set = 2
+        total_frames = 2_000_000
+        parms['lr_log2'] = -17
+        parms['base_lr_log2'] = -15
         seed = 0
         game = 'ms_pacman'
-        #        game = 'up_n_down'
-        #        game = 'atlantis'
-        #        game = 'qbert'
-        #        game = 'centipede'
-        #        game = 'battle_zone'
-
-        delay_frames = 6  # 60 fps frames to delay commands to simulate real world latency
+        delay_frames = 6
         if game == 'breakout':
             delay_frames = 0
 
-    # Override game and total_frames from command line if provided
-    if args.game is not None:
+    # Override with command line args
+    if args.game:
         game = args.game
-    if args.total_frames is not None:
+    if args.total_frames:
         total_frames = args.total_frames
 
     # use the ale_py installation path
@@ -931,7 +1553,7 @@ def main():
     num_actions = len(action_set)
     print(f'{num_actions} actions: {action_set}')
 
-    name = f'delay_{game}{delay_frames}'
+    name = f'delay_rnd_{game}{delay_frames}'
     for k, v in parms.items():
         if k != 'gpu':
             name += '_'
@@ -939,6 +1561,11 @@ def main():
     print(name)
 
     agent = Agent(data_dir, seed, num_actions, total_frames, **parms)
+
+    # Load checkpoint if specified
+    if args.load:
+        print(f"Loading checkpoint from {args.load}")
+        agent.load_model(args.load)
 
     # Initialize wandb
     run = None
@@ -967,6 +1594,9 @@ def main():
     environment_start = 0
     running_episode_score = 0
     environment_start_time = time.time()
+    
+    # Score EMA for smoothed tracking (like rainbow agent)
+    score_ema = None  # Will be initialized on first episode
 
     # put the average of 100 episodes in each slot, evenly divided by the total number of learning steps
     episode_graph = torch.zeros(1000, device='cpu')
@@ -981,9 +1611,6 @@ def main():
 
     # note that atlantis can learn to play indefinitely, so there may be no completed episodes in the window
     average_frames = 100_000  # frames to average episode scores over for episode_graph
-    
-    # Score EMA for progress bar
-    score_ema = None
 
     with tqdm(total=agent.total_frames, desc="Training", unit="frame", dynamic_ncols=True) as pbar:
       for u in range(agent.total_frames):
@@ -1057,8 +1684,8 @@ def main():
             episode_scores.append(running_episode_score)
             episode_score = running_episode_score
             running_episode_score = 0
-            
-            # Update score EMA
+
+            # Update score EMA (like rainbow agent)
             if score_ema is None:
                 score_ema = float(episode_score)
             else:
@@ -1069,8 +1696,11 @@ def main():
             frames_per_second = frames / (now - environment_start_time)
             environment_start_time = now
 
+            # Include RND stats in output
             print(
-                f'{rank}:{name} frame:{u:7} {frames_per_second:4.0f}/s eps {len(episode_scores) - 1:3},{frames:5}={int(episode_score):5} ema {score_ema:.1f} err {agent.avg_error_ema:.1f} {agent.max_error_ema:.1f} loss {agent.train_loss_ema:.1f} targ {agent.target_ema:.1f} avg {avg:4.1f}'
+                f'{rank}:{name} frame:{u:7} {frames_per_second:4.0f}/s eps {len(episode_scores) - 1:3},{frames:5}={int(episode_score):5} '
+                f'ema {score_ema:.1f} err {agent.avg_error_ema:.1f} {agent.max_error_ema:.1f} loss {agent.train_loss_ema:.1f} '
+                f'targ {agent.target_ema:.1f} rnd {agent.intrinsic_reward_ema:.3f} avg {avg:4.1f}'
             )
 
             # Wandb logging
@@ -1085,12 +1715,14 @@ def main():
                     "train/avg_error": agent.avg_error_ema.item(),
                     "train/max_error": agent.max_error_ema.item(),
                     "train/target": agent.target_ema.item(),
+                    "rnd/intrinsic_reward": agent.intrinsic_reward_ema.item(),
+                    "rnd/loss": agent.rnd_loss_ema.item(),
                 }, step=u)
+
+            torch.cuda.nvtx.range_pop()
             
             # Update progress bar
             pbar.set_postfix(sps=int(frames_per_second), score=int(episode_score), ema=f"{score_ema:.0f}")
-
-            torch.cuda.nvtx.range_pop()
 
         taken_action = agent.frame(ale.getScreenRGB(), reward, end_of_episode)
         pbar.update(1)
@@ -1132,3 +1764,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

@@ -47,6 +47,8 @@ def main(args):
     logger.info(f"Importing agent: {args.agent_type}")
     if args.agent_type == 'agent_delay_target':
         from agent_delay_target import Agent
+    elif args.agent_type == 'agent_delay_target_rnd':
+        from agent_delay_target_rnd import Agent
     elif args.agent_type == 'agent_dqn':
         from agent_dqn import Agent
     elif args.agent_type == 'agent_rainbow':
@@ -222,6 +224,13 @@ def main(args):
                     agent_args = {
                         'ring_buffer_size': 200 * 1024,
                         "use_model": 3,
+                        "gpu": args.gpu,
+                    }
+                elif args.agent_type == 'agent_delay_target_rnd':
+                    agent_args = {
+                        'ring_buffer_size': 200 * 1024,
+                        "use_model": 3,  # weighted pooling, same as agent_delay_target
+                        "intrinsic_reward_scale": 0.01,  # lower for physical (noisy obs), was 0.1
                         "gpu": args.gpu,
                     }
                 elif args.agent_type == 'agent_dqn':
@@ -665,7 +674,7 @@ def get_argument_parser():
         '--agent_type',
         type=str,
         default="agent_delay_target",
-        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_rainbow", "agent_ppo"],
+        choices=["agent_delay_target", "agent_delay_target_rnd", "agent_random", "agent_dqn", "agent_rainbow", "agent_ppo"],
     )
     parser.add_argument(
         '--reduce_action_set',
