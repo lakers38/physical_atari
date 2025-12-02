@@ -14,40 +14,58 @@ class CNNFeatureExtractor(nn.Module):
     """
     CNN feature extractor based on Nature DQN architecture.
 
-    Input: (batch, 4, 84, 84) - 4 stacked grayscale frames
-    Output: (batch, 512) - feature vector
+    Input: (batch, n_stack, H, W) - stacked grayscale frames
+    Output: (batch, feature_dim) - feature vector
+
+    Supports 84x84 and 128x128 input sizes.
     """
 
-    def __init__(self, n_stack=4, feature_dim=512):
+    def __init__(self, n_stack=4, feature_dim=512, input_size=84):
         """
         Args:
             n_stack: Number of stacked frames (default: 4)
             feature_dim: Output feature dimension (default: 512)
+            input_size: Input image size (84 or 128, default: 84)
         """
         super().__init__()
         self.n_stack = n_stack
         self.feature_dim = feature_dim
+        self.input_size = input_size
 
         # Nature DQN convolutional layers
-        # Input: (n_stack, 84, 84)
+        # Same architecture works for both 84x84 and 128x128
         self.conv = nn.Sequential(
-            nn.Conv2d(n_stack, 32, kernel_size=8, stride=4),  # → (32, 20, 20)
+            nn.Conv2d(n_stack, 32, kernel_size=8, stride=4),  # 84→20, 128→31
             nn.ReLU(True),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),       # → (64, 9, 9)
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),       # 20→9, 31→14
             nn.ReLU(True),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),       # → (64, 7, 7)
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),       # 9→7, 14→12
             nn.ReLU(True),
-            nn.Flatten()                                       # → 3136
+            nn.Flatten()
         )
+
+        # Calculate conv output size
+        conv_out_size = self._get_conv_output_size(input_size)
 
         # Fully connected layer
         self.fc = nn.Sequential(
-            nn.Linear(64 * 7 * 7, feature_dim),  # 3136 → 512
+            nn.Linear(conv_out_size, feature_dim),
             nn.ReLU(True)
         )
 
         # Initialize weights
         self._initialize_weights()
+
+    def _get_conv_output_size(self, input_size):
+        """Calculate the output size of conv layers."""
+        # Conv1: kernel=8, stride=4, padding=0
+        size = (input_size - 8) // 4 + 1
+        # Conv2: kernel=4, stride=2, padding=0
+        size = (size - 4) // 2 + 1
+        # Conv3: kernel=3, stride=1, padding=0
+        size = (size - 3) // 1 + 1
+        # Output: 64 channels × size × size
+        return 64 * size * size
 
     def _initialize_weights(self):
         """Initialize network weights using orthogonal initialization."""
@@ -62,7 +80,7 @@ class CNNFeatureExtractor(nn.Module):
         Forward pass.
 
         Args:
-            x: Tensor of shape (batch, n_stack, 84, 84)
+            x: Tensor of shape (batch, n_stack, H, W) where H=W=input_size
 
         Returns:
             features: Tensor of shape (batch, feature_dim)
