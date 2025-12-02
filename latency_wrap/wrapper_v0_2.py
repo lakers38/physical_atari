@@ -54,12 +54,14 @@ class BatchedLatencyModel:
         x = x @ self.pred_weight.T + self.pred_bias
         return x
 
-    def act_batch(self, actions):
+    def act_batch(self, actions, allowed_actions=None):
         """
         Process all environments in one forward pass.
 
         Args:
             actions (np.ndarray): Array of shape (n_envs,) with action indices
+            allowed_actions (list, optional): List of allowed action indices in full 18-action space.
+                                            If provided, only these actions can be sampled.
 
         Returns:
             np.ndarray: Array of shape (n_envs,) with delayed action indices
@@ -79,6 +81,14 @@ class BatchedLatencyModel:
 
         # Single batched forward pass
         logits = self._forward_batch(batch_input)
+
+        # Mask disallowed actions if specified
+        if allowed_actions is not None:
+            allowed_actions = np.array(allowed_actions)
+            # Create mask: set logits for disallowed actions to -inf
+            mask = np.zeros_like(logits)
+            mask[:, allowed_actions] = 1.0
+            logits = np.where(mask == 1.0, logits, -np.inf)
 
         # Softmax and argmax per environment
         logits_max = logits.max(axis=1, keepdims=True)

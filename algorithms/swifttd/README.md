@@ -1,206 +1,269 @@
-# SwiftTD Q-Learning for Atari
+# SwiftTD Actor-Critic for Atari
 
-This directory contains a SwiftTD-based Q-learning implementation for Atari games, designed to be consistent with the PPO and R2D2 training setups.
+Implementation of an **Actor-Critic agent with SwiftTD critic** for Atari reinforcement learning.
 
 ## Overview
 
-**SwiftTD** is an algorithm for temporal difference learning with adaptive step sizes. This implementation uses 18 separate SwiftTD learners (one per action) for Q-learning on Atari games.
+This implementation combines:
+- **Actor-Critic architecture** (A2C) for policy learning
+- **SwiftTD** adaptive step-size TD(λ) for the critic
+- **Nature DQN CNN** for feature extraction (128x128 input)
+- **Online learning** with immediate updates (no replay buffer)
 
-### Architecture
+## Architecture
 
 ```
-Environment (frame-stacked) → CNN Feature Extractor → 18 SwiftTD Q-Learners → ε-greedy Action Selection
-                                 (512-dim features)      Q(s,a₀)...Q(s,a₁₇)
+Input: (128, 128, 4) stacked grayscale frames
+   ↓
+[CNN Feature Extractor]  (Nature DQN architecture)
+   ↓ (512 features)
+   ├─→ [Actor Head: 512 → 256 → actions]  ← Policy gradient
+   └─→ [SwiftTD Critic: 512 → V(s)]       ← Adaptive TD(λ)
 ```
 
-**Key Components:**
-- **Frame Stacking**: 4 consecutive frames (4, 84, 84) for temporal information
-- **CNN**: Nature DQN architecture adapted for 4-channel input → 512 features
-- **18 Q-Learners**: Separate SwiftTD learners for each action
-- **Online Learning**: Updates after each step (no replay buffer)
-- **Latency Simulation**: Optional LatencyModel wrapper for sim_lat mode
+**Key Features:**
+- **Shared CNN backbone**: Trained with TD backprop
+- **Actor (policy)**: Stochastic policy with entropy regularization
+- **Critic (value)**: SwiftTD with per-feature adaptive step sizes
+- **128x128 input**: Matches PPO setup (vs standard 84x84)
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+# SwiftTD library (included in public/)
+cd public/swifttd
+pip install -e .
+cd ../..
+
+# Other dependencies
+pip install torch gymnasium ale-py scipy coolname
+pip install wandb  # Optional, for logging
+```
+
+### 2. Run Smoke Tests
+
+```bash
+# Verify implementation works
+~/miniconda3/envs/robotroller/bin/python smoke_tests_actor_critic.py
+```
+
+Expected output:
+```
+[Test 1/7] Bandit prefers rewarded action... ✓ PASSED
+[Test 2/7] Bandit with life loss terminals... ✓ PASSED
+[Test 3/7] Bandit reward flip adapts policy... ⊘ SKIPPED
+[Test 4/7] Value learning... ✓ PASSED
+[Test 5/7] Entropy decreases with learning... ✓ PASSED
+[Test 6/7] Save and load... ✓ PASSED
+```
+
+### 3. Train on Atari
+
+```bash
+# Quick test (Pong, 500k steps, ~30 min)
+~/miniconda3/envs/robotroller/bin/python train_actor_critic_sim.py \
+    --game ALE/Pong-v5 \
+    --total-timesteps 500000
+
+# Full training (MsPacman, 10M steps, ~24 hours)
+~/miniconda3/envs/robotroller/bin/python train_actor_critic_sim.py \
+    --game ALE/MsPacman-v5 \
+    --total-timesteps 10000000 \
+    --use-wandb
+```
+
+See **[TRAINING_GUIDE.md](TRAINING_GUIDE.md)** for detailed parameter explanations and tuning tips.
+
+## Using with sim_latency_vec.py
+
+The `SwiftTDVectorAgent` wrapper allows you to use this implementation with the unified `sim_latency_vec.py` training harness:
+
+### Quick Start
+
+```bash
+# Using the helper script
+cd algorithms/swifttd
+./run_swifttd_latency.sh
+
+# Or manually specify all parameters
+cd ../..
+~/miniconda3/envs/robotroller/bin/python sim_latency_vec.py \
+    --rom MsPacman \
+    --num_envs 4 \
+    --total_frames 1000000 \
+    --agent algorithms.swifttd.swifttd_vector_agent:SwiftTDVectorAgent \
+    --agent_arg "feature_dim=512" \
+    --agent_arg "learning_rate=1e-4" \
+    --agent_arg "device=cuda" \
+    --record_video \
+    --video_every 10
+```
+
+### Custom Hyperparameters
+
+Pass SwiftTD hyperparameters via `--agent_arg`:
+
+```bash
+~/miniconda3/envs/robotroller/bin/python sim_latency_vec.py \
+    --rom Pong \
+    --num_envs 8 \
+    --agent algorithms.swifttd.swifttd_vector_agent:SwiftTDVectorAgent \
+    --agent_arg "feature_dim=256" \
+    --agent_arg "actor_hidden_dim=128" \
+    --agent_arg "learning_rate=3e-4" \
+    --agent_arg "lambda_=0.9" \
+    --agent_arg "initial_alpha=1e-3" \
+    --agent_arg "gamma=0.99" \
+    --agent_arg "entropy_coef=0.01"
+```
+
+### Test the Wrapper
+
+```bash
+~/miniconda3/envs/robotroller/bin/python test_swifttd_wrapper.py
+```
 
 ## Files
 
-- `config.py` - Hyperparameters and training settings
-- `model.py` - CNN feature extractor (Nature DQN architecture)
-- `agent.py` - SwiftTDAgent class with 18 Q-learners
-- `environment.py` - Environment creation with frame stacking and latency
-- `train_agent_swifttd_sim.py` - Main training script
-- `__init__.py` - Package initialization
+| File | Description |
+|------|-------------|
+| `actor_critic.py` | ActorCriticSwiftTD agent (single-env) |
+| `swifttd_vector_agent.py` | VectorAgent wrapper for sim_latency_vec.py |
+| `model.py` | CNN feature extractor (Nature DQN architecture) |
+| `smoke_tests_actor_critic.py` | Unit tests for agent functionality |
+| `test_swifttd_wrapper.py` | Tests for VectorAgent wrapper |
+| `train_actor_critic_sim.py` | Training script with VectorSwiftTDAgent |
+| `run_swifttd_latency.sh` | Helper script for sim_latency_vec.py |
+| `TRAINING_GUIDE.md` | Comprehensive training and tuning guide |
+| `public/swifttd/` | SwiftTD C++ library (from paper authors) |
 
-## Training
+## Algorithm Details
 
-### Basic Usage
+### Actor-Critic with SwiftTD
 
-```bash
-# Train without latency (baseline)
-python algorithms/swifttd/train_agent_swifttd_sim.py \
-  --env ALE/MsPacman-v5 \
-  --timesteps 1000000 \
-  --mode sim \
-  --device cuda
-
-# Train with latency simulation
-python algorithms/swifttd/train_agent_swifttd_sim.py \
-  --env ALE/MsPacman-v5 \
-  --timesteps 1000000 \
-  --mode sim_lat \
-  --latency-model-dir ./latency_wrap \
-  --device cuda
-```
-
-### Command-Line Arguments
-
-- `--env`: Atari environment name (default: ALE/MsPacman-v5)
-- `--timesteps`: Total training timesteps (default: 1M)
-- `--mode`: Training mode - `sim` (no latency) or `sim_lat` (with LatencyModel)
-- `--latency-model-dir`: Directory containing LatencyModel weights
-- `--output-dir`: Base directory for outputs (default: outputs/swifttd/)
-- `--device`: Device for training - `cuda`, `cpu`, or `mps`
-- `--seed`: Random seed
-- `--wandb`: Enable Weights & Biases logging
-- `--wandb-project`: WandB project name
-- `--wandb-entity`: WandB entity/team name
-
-### Output Structure
-
-```
-outputs/swifttd/
-  └── {mode}/
-      └── {env_name}/
-          └── {run_name}/
-              ├── config.txt
-              ├── logs/
-              │   └── monitor/
-              ├── checkpoints/
-              └── final_model.pth
-```
-
-## SwiftTD Hyperparameters
-
-Key hyperparameters in `config.py`:
-
+**Actor Update** (Policy Gradient):
 ```python
-# SwiftTD learner parameters
-lambda_ = 0.95           # Eligibility trace decay
-initial_alpha = 1e-3     # Initial learning rate
-gamma = 0.99             # Discount factor
-max_step_size = 0.1      # Maximum step size
-step_size_decay = 0.9995 # Decay rate per step
-meta_step_size = 1e-4    # Meta learning rate
+# Compute advantage
+advantage = reward + γ * V(s') - V(s)
 
-# Exploration
-epsilon_start = 1.0      # Initial exploration
-epsilon_end = 0.01       # Final exploration
-epsilon_decay_steps = 250_000  # Decay period
-
-# CNN training
-cnn_learning_rate = 1e-4 # CNN optimizer learning rate
-num_features = 512       # Feature dimension
+# Policy gradient loss
+actor_loss = -log π(a|s) * advantage - β * H(π)
+            └─────┬──────┘             └──┬──┘
+           Policy gradient      Entropy bonus
 ```
 
-## How It Works
-
-### Q-Learning with Multiple Learners
-
-1. **18 Separate Learners**: One SwiftTD learner per action learns Q(s, aᵢ)
-2. **Action Selection**:
-   - Extract features φ(s) from CNN
-   - Query all 18 learners to get Q-values
-   - Select action: ε-greedy (random with prob ε, else argmax Q)
-3. **Update**:
-   - Only update the learner for the action taken
-   - SwiftTD handles TD(λ) updates with eligibility traces
-   - Adaptive step sizes for stable learning
-
-### Feature Extraction
-
-- **Input**: 4 stacked grayscale frames (4, 84, 84)
-- **CNN**: 3 conv layers + FC layer (Nature DQN)
-- **Output**: 512-dimensional feature vector
-- **Shared**: Same CNN used for all 18 Q-learners
-
-### Training Loop
-
+**Critic Update** (SwiftTD):
 ```python
-for step in range(total_timesteps):
-    # Update epsilon (linear decay)
-    epsilon = epsilon_schedule(step)
+# SwiftTD manages adaptive step sizes α_i per feature
+δ = reward + γ * V(s') - V(s)  # TD error
+e = γλ * e + ∇V(s)             # Eligibility traces
 
-    # Select action using ε-greedy
-    action = agent.select_action(obs, epsilon)
+# Per-feature step size adaptation
+α_i = α_i * exp(θ * δ * e_i)   # IDBD meta-learning
+α_i = clip(α_i * decay, η_min, η_max)
 
-    # Take step
-    next_obs, reward, done, info = env.step(action)
-
-    # Update Q-learner for this action
-    agent.update(obs, action, reward, next_obs, done)
-
-    # Evaluation, checkpointing, logging
+# Weight update
+w_i += α_i * δ * e_i
 ```
 
-## Latency Simulation
+**Key difference from standard A2C**: The critic uses SwiftTD's adaptive per-feature step sizes instead of a fixed learning rate.
 
-When `--mode sim_lat` is used:
-- LatencyModel wrapper simulates hardware delay
-- Applied BEFORE frame stacking
-- Models delay between action selection and execution
-- Helps train robust policies for physical deployment
+### SwiftTD Hyperparameters
 
-## Differences from PPO/R2D2
+From the [SwiftTD paper](https://khurramjaved.com/swifttd.pdf):
 
-| Feature | PPO | R2D2 | SwiftTD |
-|---------|-----|------|---------|
-| Algorithm | Policy gradient | Off-policy Q-learning | On-policy Q-learning |
-| Replay | None | Large buffer | None (online) |
-| Architecture | Actor-Critic | LSTM + Dueling DQN | 18 linear learners |
-| Parallelism | 4 envs | 8 actors | 1 env |
-| Step size | Fixed | Fixed | Adaptive |
-| Eligibility traces | No | No | Yes (λ=0.95) |
+| Parameter | Symbol | Default | Description |
+|-----------|--------|---------|-------------|
+| `initial_alpha` | α₀ | 1e-3 | Initial step size |
+| `max_step_size` | η | 0.1 | Maximum step size (prevents instability) |
+| `step_size_decay` | - | 0.9995 | Gradual annealing |
+| `meta_step_size` | θ | 1e-4 | Meta-learning rate for step-size adaptation |
+| `lambda_` | λ | 0.95 | Eligibility trace decay |
+| `gamma` | γ | 0.99 | Discount factor |
 
-## Example Training Session
+## Performance Expectations
 
+### Training Progress (MsPacman, typical run):
+
+| Timesteps | Episode Reward | Notes |
+|-----------|---------------|-------|
+| 0-100k | 200-500 | Random exploration |
+| 100k-1M | 500-1000 | Learning basic patterns |
+| 1M-5M | 1000-2000 | Improving strategy |
+| 5M-10M | 2000-3000+ | Refinement |
+
+**Note**: Performance varies significantly by game and hyperparameters. See TRAINING_GUIDE.md for tuning tips.
+
+## Comparison with Other Methods
+
+| Method | Update Rule | Sample Efficiency | Stability | Complexity |
+|--------|-------------|-------------------|-----------|------------|
+| **ActorCriticSwiftTD** | Online A2C + adaptive TD | Low (online) | Medium | High (SwiftTD params) |
+| **PPO** | Batched policy gradient | High (mini-batches) | High (clipping) | Medium |
+| **DQN** | Q-learning + replay | High (replay) | Medium (target net) | Medium |
+| **A2C** | Online actor-critic | Low (online) | Medium | Low |
+
+**When to use ActorCriticSwiftTD:**
+- ✅ Researching adaptive step-size methods
+- ✅ Testing SwiftTD's effectiveness vs fixed learning rates
+- ✅ Low-memory constraints (no replay buffer)
+- ✅ Want simple online learning
+
+**When to use PPO instead:**
+- ✅ Need stable, production-ready training
+- ✅ Have tuned hyperparameters from literature
+- ✅ Want maximum sample efficiency
+
+## Debugging & Troubleshooting
+
+### Common Issues
+
+**1. Values exploding (>1000)**
 ```bash
-# Quick test (500K steps)
-python algorithms/swifttd/train_agent_swifttd_sim.py \
-  --env ALE/Pong-v5 \
-  --timesteps 500000 \
-  --mode sim \
-  --device cuda \
-  --wandb
-
-# Full training with latency (1M steps)
-python algorithms/swifttd/train_agent_swifttd_sim.py \
-  --env ALE/MsPacman-v5 \
-  --timesteps 1000000 \
-  --mode sim_lat \
-  --device cuda \
-  --wandb \
-  --wandb-project physical-atari
+# Reduce max step size
+--swifttd-max-step-size 0.01
 ```
 
-## Monitoring
+**2. Not learning / random performance**
+```bash
+# Increase learning rates and exploration
+--learning-rate 3e-4 --entropy-coef 0.05
+```
 
-- **Console**: Episode rewards, lengths, FPS
-- **WandB**: Real-time metrics, evaluation results
-- **Monitor logs**: CSV files in `logs/monitor/`
-- **Checkpoints**: Saved every 100K steps
+**3. Training crashes with NaN**
+```bash
+# Reduce all learning rates
+--learning-rate 1e-5 --swifttd-alpha 1e-4 --swifttd-max-step-size 0.01
+```
 
-## Future Improvements
+**4. "Features are all zeros" error**
+- Check observations are non-zero (not using `np.zeros` for input)
+- Verify CNN is properly initialized and processing frames
 
-1. **CNN Training**: Currently CNN is initialized but not updated. Could implement:
-   - Store raw observations for backprop through CNN
-   - Update CNN using TD errors from Q-learners
+See **Troubleshooting** section in TRAINING_GUIDE.md for more details.
 
-2. **Target Network**: Add target network for more stable Q-learning
+## Citation
 
-3. **Sparse Features**: Use `SwiftTDBinaryFeatures` with feature hashing for efficiency
+If you use this implementation, please cite the SwiftTD paper:
 
-4. **Parallel Actors**: Like R2D2 but with shared SwiftTD learners
+```bibtex
+@article{javed2024swifttd,
+  title={SwiftTD: A Fast and Robust Algorithm for Temporal Difference Learning},
+  author={Javed, Khurram and White, Martha},
+  journal={Reinforcement Learning Journal},
+  year={2024}
+}
+```
 
 ## References
 
-- SwiftTD paper: Javed, Sharifnassab, and Sutton (2024)
-- SwiftTD repo: https://github.com/khurramjaved96/swifttd
-- Nature DQN: Mnih et al. (2015)
+- **SwiftTD Paper**: https://khurramjaved.com/swifttd.pdf
+- **Interactive Demo**: https://khurramjaved.com/swifttd.html
+- **A2C Paper**: Mnih et al. "Asynchronous Methods for Deep RL" (2016)
+- **Nature DQN**: Mnih et al. "Human-level control through deep RL" (2015)
+
+## License
+
+SwiftTD library (`public/swifttd/`) is provided by the paper authors. Check their repository for license details.
