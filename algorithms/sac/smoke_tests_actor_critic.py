@@ -1,5 +1,5 @@
 """
-Smoke tests for SwiftTDAgent
+Smoke tests for the soft actor-critic style agent.
 
 Tests basic learning capabilities on simple bandit-style problems.
 """
@@ -35,20 +35,19 @@ except ImportError:
 
 
 def _make_agent(overrides=None):
-    """Create a SwiftTDAgent with default params for testing."""
+    """Create an agent with default params for testing."""
     params = dict(
         num_actions=4,
         feature_dim=512,
         actor_hidden_dim=256,
+        value_hidden_dim=256,
         n_stack=4,  # Single frame for testing
         input_size=128,
         device='cpu',
-        # SwiftTD hyperparameters (aggressive for fast learning)
-        lambda_=0.0,  # No eligibility traces for bandit
         gamma=0.0,  # Bandit-style (no discounting)
-        initial_alpha=1e-3,  # High learning rate for fast convergence
-        learning_rate=1e-3,  # High LR for actor
+        learning_rate=1e-3,  # High LR for fast convergence
         entropy_coef=0.1,  # Higher entropy for exploration in tests
+        value_coef=0.5,
     )
 
     if overrides:
@@ -66,7 +65,7 @@ def _make_obs():
     global _CACHED_OBS
     if _CACHED_OBS is None:
         # Create a fixed non-zero observation for bandit tests
-        # (all-zero observations lead to all-zero features, breaking SwiftTD learning)
+        # (all-zero observations lead to all-zero features, breaking learning)
         # Use a simple pattern so features are non-zero but consistent
         _CACHED_OBS = np.ones((128, 128, 4), dtype=np.uint8) * 128
     return _CACHED_OBS.copy()
@@ -222,7 +221,8 @@ def test_value_function_learns_returns():
         # Deterministic reward
         reward = 1.0 if action == target_action else 0.0
 
-        v_pred = agent.prev_value  # Current critic prediction before update
+        with torch.no_grad():
+            v_pred = agent.value_head(feats).mean().item()  # Current critic prediction before update
 
         # Next observation
         next_obs = _make_obs()
@@ -245,9 +245,11 @@ def test_value_function_learns_returns():
         if t % 64 == 0:
             recent_mean = np.mean(recent_advantages)
             recent_std = np.std(recent_advantages)
-            print(f"Step {t}: action={action}, reward={reward:.1f}, "
-                  f"V_pred={v_pred:.3f}, advantage={metrics['advantage']:.3f}, "
-                  f"recent_adv_mean={recent_mean:.3f}±{recent_std:.3f}")
+            print(
+                f"Step {t}: action={action}, reward={reward:.1f}, "
+                f"V_pred={v_pred:.3f}, advantage={metrics['advantage']:.3f}, "
+                f"recent_adv_mean={recent_mean:.3f}±{recent_std:.3f}"
+            )
 
     # Check that advantages are trending toward zero (value function learning)
     early_advantages = advantages[:50]
@@ -267,17 +269,14 @@ def test_value_function_learns_returns():
 
 def test_lifetime_return_error_decreases():
     """
-    SwiftTD paper measures lifetime error of the return function.
-
-    This test approximates that metric by tracking the squared error
-    between the critic's prediction V(s) and the true one-step return
-    in a deterministic bandit (reward=+1 every step, gamma=0, no traces).
-    The cumulative error should shrink over training.
+    Approximate lifetime error by tracking the squared error between the critic's
+    prediction V(s) and the true one-step return in a deterministic bandit
+    (reward=+1 every step, gamma=0). The cumulative error should shrink over training.
     """
     np.random.seed(3)
     torch.manual_seed(3)
 
-    agent = _make_agent(overrides=dict(gamma=0.0, lambda_=0.0, entropy_coef=0.0))
+    agent = _make_agent(overrides=dict(gamma=0.0, entropy_coef=0.0, value_coef=1.0))
     obs = _make_obs()
     agent.start_episodes(obs[np.newaxis])
 
@@ -289,19 +288,21 @@ def test_lifetime_return_error_decreases():
         # Use the actor to stay close to real training flow
         actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
 
-        # Lifetime error proxy: squared error of current value prediction
-        errors.append((true_return - agent.prev_value) ** 2)
-
         # Deterministic reward, no terminals
-        agent.update(
+        metrics = agent.update(
             obs[np.newaxis], actions, [true_return],
             obs[np.newaxis], [False],
             log_probs, entropy, feats
         )
 
+        # Lifetime error proxy: squared error of current value prediction
+        errors.append((true_return - metrics["value_pred"]) ** 2)
+
         if t % 64 == 0:
-            print(f"Step {t}: V_pred={agent.prev_value:.3f}, "
-                  f"squared_error={(true_return - agent.prev_value) ** 2:.4f}")
+            print(
+                f"Step {t}: V_pred={metrics['value_pred']:.3f}, "
+                f"squared_error={(true_return - metrics['value_pred']) ** 2:.4f}"
+            )
 
     early_error = np.mean(errors[:50])
     late_error = np.mean(errors[-50:])
@@ -314,7 +315,7 @@ def test_lifetime_return_error_decreases():
 if __name__ == "__main__":
     # Run tests manually
     print("=" * 60)
-    print("Running Smoke Tests for SwiftTDAgent")
+    print("Running Smoke Tests for Soft Actor-Critic Agent")
     print("=" * 60)
 
     print("\n[Test 1/3] Bandit prefers rewarded action...")

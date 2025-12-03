@@ -1,23 +1,14 @@
 """
-Actor-Critic architecture with SwiftTD critic for Atari.
-
-Implements A2C with:
-- Shared CNN feature extractor (trained with TD backprop)
-- Policy head (actor) for action selection
-- SwiftTD critic for value function V(s)
-
-Following the approach from SwiftTD paper Section 7:
-- SwiftTD applied ONLY to the last layer (critic)
-- CNN trained with standard TD(λ) backprop
-- Separate learning rates for CNN and SwiftTD
+Minimal Actor-Critic architecture for Atari using a shared CNN encoder and
+two-layer MLP heads for both policy and value prediction. The critic learns
+with a simple TD target (reward + γ V(s')) and both heads are trained via
+backprop.
 """
 
-from math import isfinite
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import swifttd
 
 from typing import Tuple
 import os
@@ -190,7 +181,7 @@ class PolicyHead(nn.Module):
 
 class SwiftTDAgent:
     """
-    Shared actor (CNN + policy head) with per-environment SwiftTD critics.
+    Shared actor (CNN + policy head) with learned value function.
     """
 
     def __init__(
@@ -198,31 +189,22 @@ class SwiftTDAgent:
         num_actions: int,
         feature_dim: int = 512,
         actor_hidden_dim: int = 256,
+        value_hidden_dim: int = 256,
         n_stack: int = 4,
         input_size: int = 128,
         device: str = "cuda",
-        # SwiftTD hyperparameters
-        lambda_: float = 0.95,
-        initial_alpha: float = 1e-4,
         gamma: float = 0.99,
-        eps: float = 1e-5,
-        max_step_size: float = 0.01,
-        step_size_decay: float = 0.99,
-        meta_step_size: float = 1e-4,
-        eta_min: float = 1e-6,
-        # Optimization
         learning_rate: float = 1e-4,
         entropy_coef: float = 0.01,
+        value_coef: float = 0.5,
         fail_on_nonfinite: bool = True,
-        critic_feature_scale: float = 0.01,
     ):
         self.num_actions = num_actions
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.gamma = gamma
         self.entropy_coef = entropy_coef
+        self.value_coef = value_coef
         self.fail_on_nonfinite = fail_on_nonfinite
-        self._signal_eps = 1e-6
-        self.critic_feature_scale = critic_feature_scale
         self.n_stack = n_stack
         self.input_size = input_size
 
@@ -230,35 +212,14 @@ class SwiftTDAgent:
         self.actor = PolicyHead(feature_dim=feature_dim, hidden_dim=actor_hidden_dim, num_actions=num_actions).to(
             self.device
         )
-        self.optimizer = torch.optim.Adam(list(self.cnn.parameters()) + list(self.actor.parameters()), lr=learning_rate)
-
-        # Per-env SwiftTD critics + caches
-        self._critic_kwargs = dict(
-            number_of_features=feature_dim,
-            lambda_init=lambda_,
-            alpha_init=initial_alpha,
-            gamma_init=gamma,
-            epsilon_init=eps,
-            eta_init=max_step_size,
-            decay_init=step_size_decay,
-            meta_step_size_init=meta_step_size,
-            eta_min_init=eta_min,
-        )
-        self.critic = self._build_critic()
-        self.prev_value = 0.0
-        self.prev_feature = None
-
-    def _build_critic(self) -> swifttd.SwiftTDNonSparse:
-        return swifttd.SwiftTDNonSparse(
-            self._critic_kwargs["number_of_features"],
-            self._critic_kwargs["lambda_init"],
-            self._critic_kwargs["alpha_init"],
-            self._critic_kwargs["gamma_init"],
-            self._critic_kwargs["epsilon_init"],
-            self._critic_kwargs["eta_init"],
-            self._critic_kwargs["decay_init"],
-            self._critic_kwargs["meta_step_size_init"],
-            self._critic_kwargs["eta_min_init"],
+        self.value_head = nn.Sequential(
+            nn.Linear(feature_dim, value_hidden_dim),
+            nn.ReLU(True),
+            nn.Linear(value_hidden_dim, 1),
+        ).to(self.device)
+        self.optimizer = torch.optim.Adam(
+            list(self.cnn.parameters()) + list(self.actor.parameters()) + list(self.value_head.parameters()),
+            lr=learning_rate,
         )
 
     def _check_finite(self, tensor: torch.Tensor, ctx: str) -> torch.Tensor:
@@ -267,38 +228,32 @@ class SwiftTDAgent:
         return tensor
 
     def start_episodes(self, obs_batch: np.ndarray):
-        feats_torch, feats_np = self._extract_features(obs_batch)
-        v = self.critic.step(feats_np[0].tolist(), 0.0)  # CRITICAL_LINE bootstrap V(s)
-        self.prev_value = v
-        self.prev_feature = feats_np[0]
-        return feats_torch, feats_np
+        # No bootstrapping needed; keep signature for compatibility
+        return self._extract_features(obs_batch)
 
     def reset_done(self, done: int, obs_batch: np.ndarray):
-        if not done:
-            return
-        _, feats_np = self._extract_features(obs_batch)
-        v = self.critic.step(feats_np[0].tolist(), 0.0)  # CRITICAL_LINE reset V(s) after terminal
-        self.prev_value = v
-        self.prev_feature = feats_np[0]
+        # Stateless reset (maintained for API compatibility)
+        _ = obs_batch
 
     def _extract_features(self, obs_batch: np.ndarray) -> Tuple[torch.Tensor, np.ndarray]:
-        assert obs_batch.shape == (1, self.input_size, self.input_size, self.n_stack), f"obs_batch.shape is expected to be (1, {self.input_size}, {self.input_size}, {self.n_stack}), but got {obs_batch.shape}"
+        assert obs_batch.shape == (1, self.input_size, self.input_size, self.n_stack), (
+            f"obs_batch.shape is expected to be (1, {self.input_size}, {self.input_size}, {self.n_stack}), "
+            f"but got {obs_batch.shape}"
+        )
         obs_batch = np.transpose(obs_batch, (0, 3, 1, 2))
-        obs_t = torch.as_tensor(
-            obs_batch, device=self.device, dtype=torch.float32
-        ) / 255.0
-        feats = self.cnn(obs_t)  # CRITICAL_LINE shared encoder φ(s_t) for all envs
+        obs_t = torch.as_tensor(obs_batch, device=self.device, dtype=torch.float32) / 255.0
+        feats = self.cnn(obs_t)
         feats = self._check_finite(feats, ctx="features")
-        return feats, feats.detach().cpu().numpy() * self.critic_feature_scale  # CRITICAL_LINE scaled φ(s) fed to SwiftTD
+        return feats, feats.detach().cpu().numpy()
 
     def select_actions(self, obs_batch: np.ndarray):
         feats_torch, feats_np = self._extract_features(obs_batch)
-        logits = self._check_finite(self.actor(feats_torch), ctx="logits")  # CRITICAL_LINE policy logits π(a|s)
+        logits = self._check_finite(self.actor(feats_torch), ctx="logits")
         dist = torch.distributions.Categorical(logits=logits)
         actions = dist.sample()
         log_probs = dist.log_prob(actions)
         entropy = dist.entropy()
-        return actions.cpu().numpy(), log_probs, entropy, feats_np
+        return actions.cpu().numpy(), log_probs, entropy, feats_torch
 
     def update(
         self,
@@ -309,75 +264,62 @@ class SwiftTDAgent:
         dones: np.ndarray,
         log_probs: torch.Tensor,
         entropy: torch.Tensor,
-        current_feats_np: np.ndarray,
-        step_idx: int = -1,
+        current_feats: torch.Tensor,
     ):
-        # Compute next features
-        next_feats_torch, next_feats_np = self._extract_features(next_obs_batch)  # CRITICAL_LINE compute φ(s_{t+1})
+        # Compute value for current and next states
+        value_pred = self._check_finite(self.value_head(current_feats).squeeze(-1), ctx="value_pred")
 
-        # Single environment processing
-        V_current = float(self.prev_value)
-        reward = float(rewards[0])
-        assert isfinite(reward), f"Reward is not finite: {reward}"
-        assert isfinite(V_current), f"V_current is not finite: {V_current}"
-        done = bool(dones[0])
-
-        target_feats = np.zeros_like(next_feats_np[0]) if done else next_feats_np[0]  # CRITICAL_LINE absorbing-state handling
-        V_next = self.critic.step(target_feats.tolist(), reward)  # CRITICAL_LINE SwiftTD update/query
-        if not isfinite(V_next):
-            feats_min = float(np.min(target_feats))
-            feats_max = float(np.max(target_feats))
-            feats_norm = float(np.linalg.norm(target_feats))
-            raise ValueError(
-                f"V_next is not finite: {V_next} "
-                f"(reward={reward}, done={done}, V_current={V_current}, "
-                f"feat_min={feats_min}, feat_max={feats_max}, feat_norm={feats_norm})"
+        with torch.no_grad():
+            next_feats, _ = self._extract_features(next_obs_batch)
+            value_next = self.value_head(next_feats).squeeze(-1)
+            target = torch.as_tensor(rewards, device=self.device, dtype=torch.float32) + (
+                torch.as_tensor(1 - np.array(dones, dtype=np.int32), device=self.device, dtype=torch.float32)
+                * self.gamma
+                * value_next
             )
-        advantage = reward + (0.0 if done else self.gamma * V_next) - V_current  # CRITICAL_LINE TD error / advantage
-        value_target = reward + (0.0 if done else self.gamma * V_next)
-        return_error = (value_target - V_current) ** 2  # Squared TD target error
 
-        # Update caches
-        if done:
-            self.prev_value = 0.0
-            self.prev_feature = None
-        else:
-            self.prev_value = V_next
-            self.prev_feature = target_feats
+        # Critic loss (TD error)
+        value_loss = F.mse_loss(value_pred, target)
 
-        # Actor loss
-        adv_tensor = torch.as_tensor([advantage], device=self.device, dtype=torch.float32)
-        adv_tensor = self._check_finite(adv_tensor, ctx="advantage")
-        log_probs = log_probs.to(self.device)
-        entropy = entropy.to(self.device)
+        # Actor loss (advantage using TD target)
+        advantages = (target - value_pred).detach()
+        actor_loss = -(log_probs.to(self.device) * advantages).mean() - self.entropy_coef * entropy.to(self.device).mean()
 
-        actor_loss = -(log_probs * adv_tensor).mean() - self.entropy_coef * entropy.mean()
+        total_loss = actor_loss + self.value_coef * value_loss
 
         self.optimizer.zero_grad()
-        actor_loss.backward()
+        total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.cnn.parameters(), max_norm=10.0)
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=10.0)
+        torch.nn.utils.clip_grad_norm_(self.value_head.parameters(), max_norm=10.0)
         self.optimizer.step()
 
         return {
             "actor_loss": float(actor_loss.detach().cpu().item()),
-            "advantage": float(advantage),
-            "value_pred": float(V_current),
-            "value_next": float(V_next),
-            "value_target": float(value_target),
-            "return_error": float(return_error),
+            "value_loss": float(value_loss.detach().cpu().item()),
+            "total_loss": float(total_loss.detach().cpu().item()),
+            "advantage": float(advantages.mean().item()),
+            "value_pred": float(value_pred.mean().item()),
+            "value_next": float(value_next.mean().item()),
+            "value_target": float(target.mean().item()),
         }
 
     def save(self, path: str):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(
-            {"cnn": self.cnn.state_dict(), "actor": self.actor.state_dict(), "optim": self.optimizer.state_dict()}, path
+            {
+                "cnn": self.cnn.state_dict(),
+                "actor": self.actor.state_dict(),
+                "value_head": self.value_head.state_dict(),
+                "optim": self.optimizer.state_dict(),
+            },
+            path,
         )
 
     def load(self, path: str):
         ckpt = torch.load(path, map_location=self.device)
         self.cnn.load_state_dict(ckpt["cnn"])
         self.actor.load_state_dict(ckpt["actor"])
+        if "value_head" in ckpt:
+            self.value_head.load_state_dict(ckpt["value_head"])
         self.optimizer.load_state_dict(ckpt["optim"])
-        self.prev_value = 0.0
-        self.prev_feature = None
