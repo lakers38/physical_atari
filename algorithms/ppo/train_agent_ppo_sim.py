@@ -178,8 +178,10 @@ class VecLatencyWrapper:
         else:
             actions = np.array(actions)
 
+        # When action_mapping exists, constrain latency model to only sample from those actions
+        allowed_actions = self.action_mapping if self.action_mapping is not None else None
         # Single batched forward pass for all envs
-        delayed_actions = self.latency_model.act_batch(actions)
+        delayed_actions = self.latency_model.act_batch(actions, allowed_actions=allowed_actions)
 
         self.venv.step_async(delayed_actions)
 

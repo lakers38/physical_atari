@@ -54,12 +54,14 @@ class BatchedLatencyModel:
         x = x @ self.pred_weight.T + self.pred_bias
         return x
 
-    def act_batch(self, actions):
+    def act_batch(self, actions, allowed_actions=None):
         """
         Process all environments in one forward pass.
 
         Args:
             actions (np.ndarray): Array of shape (n_envs,) with action indices
+            allowed_actions (list, optional): List of allowed action indices in full 18-action space.
+                                            If provided, only these actions can be sampled.
 
         Returns:
             np.ndarray: Array of shape (n_envs,) with delayed action indices
@@ -79,6 +81,14 @@ class BatchedLatencyModel:
 
         # Single batched forward pass
         logits = self._forward_batch(batch_input)
+
+        # Mask disallowed actions if specified
+        if allowed_actions is not None:
+            allowed_actions = np.array(allowed_actions)
+            # Create mask: set logits for disallowed actions to -inf
+            mask = np.zeros_like(logits)
+            mask[:, allowed_actions] = 1.0
+            logits = np.where(mask == 1.0, logits, -np.inf)
 
         # Softmax and argmax per environment
         logits_max = logits.max(axis=1, keepdims=True)
@@ -162,13 +172,14 @@ class LatencyModel:
         x = x @ self.pred_weight.T + self.pred_bias
         return x
 
-    def act(self, action):
+    def act(self, action, allowed_actions=None):
         """
         Accepts a new joystick action, updates the action queue, and returns
         the predicted action to execute (with latency effects).
 
         Args:
             action (ale_py.Action): The new joystick action.
+            allowed_actions (list[int] or None): If provided, restrict output to this set of action indices.
 
         Returns:
             ale_py.Action: The action to actually execute, based on the model's prediction.
@@ -180,6 +191,13 @@ class LatencyModel:
         self.action_queue.append(self.__one_hot_encode(action, self.last_action, 36))
         representation = np.array(self.action_queue).reshape(1, -1)
         logits = self.__forward(representation)
+
+        if allowed_actions is not None:
+            allowed_actions = list(allowed_actions)
+            masked_logits = np.full_like(logits, -np.inf)
+            masked_logits[0, allowed_actions] = logits[0, allowed_actions]
+            logits = masked_logits
+
         probs = np.exp(logits - np.max(logits))  # for numerical stability
         probs /= np.sum(probs)
         # sampled_action = int(np.random.choice(len(probs[0]), p=probs[0]))
