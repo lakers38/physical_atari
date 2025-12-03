@@ -147,14 +147,16 @@ class LatencyWrapper(gym.Wrapper):
     real-world delay between action selection and execution.
     """
 
-    def __init__(self, env, latency_model_dir):
+    def __init__(self, env, latency_model_dir, allowed_actions=None):
         """
         Args:
             env: The Gymnasium environment to wrap
             latency_model_dir: Directory containing the LatencyModel weights
+            allowed_actions: Optional list of action indices to restrict latency outputs
         """
         super().__init__(env)
         self.latency_model = LatencyModel(directory_with_weights=latency_model_dir)
+        self.allowed_actions = None if allowed_actions is None else list(allowed_actions)
         print(f"[LatencyWrapper] Initialized with weights from {latency_model_dir}")
 
     def step(self, action):
@@ -169,7 +171,7 @@ class LatencyWrapper(gym.Wrapper):
         """
         # Convert action to ALE action format and apply latency model
         ale_action = ale_py.Action(int(action))
-        delayed_action = self.latency_model.act(ale_action)
+        delayed_action = self.latency_model.act(ale_action, allowed_actions=self.allowed_actions)
 
         # Execute the delayed action in the environment
         return self.env.step(int(delayed_action))
@@ -197,7 +199,9 @@ def create_single_atari_env(
     video_freq_episodes: int = 50,
 ):
     """Create single Atari environment with preprocessing and optional latency."""
-    use_full_action_space = simulate_latency or (reduce_action_set == 0)
+    # Never override reduce_action_set because of latency; instead, mask latency outputs.
+    # Full action space only when explicitly requested or when we remap to 4-dir set.
+    use_full_action_space = reduce_action_set in (0, 2)
 
     env = gym.make(
         env_name,
@@ -206,6 +210,14 @@ def create_single_atari_env(
         full_action_space=use_full_action_space,
     )
 
+    # Allowed actions for latency masking
+    allowed_actions = None
+    if reduce_action_set == 1:
+        allowed_actions = list(range(env.action_space.n))
+    elif reduce_action_set == 2:
+        # Map to directional joystick actions (UP, DOWN, LEFT, RIGHT)
+        allowed_actions = [2, 5, 4, 3]
+
     # Standard Atari preprocessing
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
@@ -213,10 +225,10 @@ def create_single_atari_env(
     # Latency wrapper (before action reduction)
     if simulate_latency:
         print(f"[sim_lat] Applying latency simulation to {env_name}")
-        env = LatencyWrapper(env, latency_model_dir)
+        env = LatencyWrapper(env, latency_model_dir, allowed_actions=allowed_actions)
 
-    # Action set reduction (only if NOT using latency)
-    if not simulate_latency and reduce_action_set == 2:
+    # Action set reduction (still applies even with latency)
+    if reduce_action_set == 2:
         env = ActionSetWrapper(env, reduce_action_set, env_name)
 
     # Preprocessing (grayscale, resize, stack)
@@ -232,7 +244,8 @@ def create_single_atari_env(
         env = RecordVideo(
             env, video_folder=video_path,
             episode_trigger=lambda ep: ep % video_freq_episodes == 0,
-            name_prefix="training"
+            name_prefix="training",
+            video_length=500,
         )
 
     env.reset(seed=seed)
@@ -274,6 +287,7 @@ def train_loop(
     tensorboard_writer: SummaryWriter,
     checkpoint_dir: str,
     model_name: str,
+    wandb_run=None,
 ):
     """Custom training loop for SwiftTDAgent."""
     # Episode tracking
@@ -281,6 +295,9 @@ def train_loop(
     episode_lengths = []
     current_episode_reward = 0
     current_episode_length = 0
+    # For lifetime-error style metric: store per-step (value_pred, reward, done flag)
+    episode_values = []
+    episode_rewards_stream = []
     episode_count = 0
 
     # Metrics tracking (for logging window)
@@ -288,6 +305,9 @@ def train_loop(
     recent_entropies = []
     recent_actor_losses = []
     recent_log_probs = []
+    recent_return_errors = []
+    recent_value_preds = []
+    recent_value_next = []
 
     # Initialize
     obs, info = env.reset()
@@ -319,15 +339,35 @@ def train_loop(
         recent_entropies.append(entropy.item())
         recent_actor_losses.append(metrics["actor_loss"])
         recent_log_probs.append(log_probs.item())
+        recent_return_errors.append(metrics["return_error"])
+        recent_value_preds.append(metrics["value_pred"])
+        recent_value_next.append(metrics["value_next"])
 
         # Track episode stats
         current_episode_reward += reward
         current_episode_length += 1
+        episode_values.append(metrics["value_pred"])
+        episode_rewards_stream.append(reward)
 
         # Handle episode end
         if done:
             episode_rewards.append(current_episode_reward)
             episode_lengths.append(current_episode_length)
+
+            # Compute Monte Carlo returns for this episode to approximate lifetime error
+            returns = []
+            G = 0.0
+            for r in reversed(episode_rewards_stream):
+                G = r + agent.gamma * G
+                returns.append(G)
+            returns = list(reversed(returns))
+            if len(returns) == len(episode_values):
+                squared_errors = [(v - g) ** 2 for v, g in zip(episode_values, returns)]
+                lifetime_err_ep = float(np.mean(squared_errors)) if squared_errors else 0.0
+                tensorboard_writer.add_scalar("train/episode_lifetime_error", lifetime_err_ep, step)
+                if wandb_run is not None:
+                    wandb.log({"train/episode_lifetime_error": lifetime_err_ep}, step=step)
+
             episode_count += 1
 
             tensorboard_writer.add_scalar("train/episode_reward", current_episode_reward, step)
@@ -337,6 +377,8 @@ def train_loop(
             current_episode_length = 0
             obs, info = env.reset()
             agent.reset_done(done, obs[np.newaxis])
+            episode_values = []
+            episode_rewards_stream = []
         else:
             obs = next_obs
 
@@ -354,6 +396,9 @@ def train_loop(
             mean_entropy = np.mean(recent_entropies[-1000:])
             mean_actor_loss = np.mean(recent_actor_losses[-1000:])
             mean_log_prob = np.mean(recent_log_probs[-1000:])
+            mean_return_error = np.mean(recent_return_errors[-1000:])
+            mean_value_pred = np.mean(recent_value_preds[-1000:])
+            mean_value_next = np.mean(recent_value_next[-1000:])
 
             # Console output
             print(f"Step {step:,} | Ep: {episode_count} | "
@@ -361,6 +406,7 @@ def train_loop(
                   f"Len: {mean_length:5.1f} | "
                   f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
                   f"Ent: {mean_entropy:.3f} | "
+                  f"RetErr: {mean_return_error:.4f} | "
                   f"Loss: {mean_actor_loss:.4f} | "
                   f"FPS: {fps:5.1f}")
 
@@ -377,6 +423,30 @@ def train_loop(
             tensorboard_writer.add_scalar("train/advantage_std", std_advantage, step)
             tensorboard_writer.add_scalar("train/entropy", mean_entropy, step)
             tensorboard_writer.add_scalar("train/log_prob", mean_log_prob, step)
+            tensorboard_writer.add_scalar("train/return_error_mean", mean_return_error, step)
+            tensorboard_writer.add_scalar("train/value_pred_mean", mean_value_pred, step)
+            tensorboard_writer.add_scalar("train/value_next_mean", mean_value_next, step)
+
+            # WandB logging mirrors TB when enabled
+            if wandb_run is not None:
+                wandb.log(
+                    {
+                        "train/mean_reward_100ep": mean_reward,
+                        "train/max_reward_100ep": max_reward,
+                        "train/min_reward_100ep": min_reward,
+                        "train/mean_length_100ep": mean_length,
+                        "train/fps": fps,
+                        "train/actor_loss": mean_actor_loss,
+                        "train/advantage_mean": mean_advantage,
+                        "train/advantage_std": std_advantage,
+                        "train/entropy": mean_entropy,
+                        "train/log_prob": mean_log_prob,
+                        "train/return_error_mean": mean_return_error,
+                        "train/value_pred_mean": mean_value_pred,
+                        "train/value_next_mean": mean_value_next,
+                    },
+                    step=step,
+                )
 
         # Evaluation
         if step % 10000 == 0 and step > 0:
@@ -401,6 +471,17 @@ def train_agent(
     experiment_dir,
     device,
     learning_rate,
+    entropy_coef,
+    gamma,
+    lambda_,
+    critic_initial_alpha,
+    critic_eps,
+    critic_max_step_size,
+    critic_step_decay,
+    critic_meta_step_size,
+    critic_eta_min,
+    critic_feature_scale,
+    fail_on_nonfinite,
     seed,
     load_model_path,
     record_videos,
@@ -423,7 +504,18 @@ def train_agent(
         latency_model_dir: Directory with LatencyModel weights
         experiment_dir: Directory to save results
         device: "cuda", "cpu", or "mps"
-        learning_rate: Learning rate
+        learning_rate: Learning rate for actor/CNN
+        entropy_coef: Entropy bonus coefficient
+        gamma: Discount factor
+        lambda_: TD(lambda) trace parameter
+        critic_initial_alpha: SwiftTD initial step size alpha
+        critic_eps: SwiftTD epsilon threshold
+        critic_max_step_size: SwiftTD max step size eta
+        critic_step_decay: SwiftTD step size decay factor
+        critic_meta_step_size: SwiftTD meta step size
+        critic_eta_min: SwiftTD minimum eta
+        critic_feature_scale: Scale factor applied to features before SwiftTD
+        fail_on_nonfinite: If True, raise on non-finite critic outputs
         seed: Random seed
         load_model_path: Path to pre-trained model to continue training
         record_videos: If True, record gameplay videos
@@ -449,9 +541,9 @@ def train_agent(
             "total_timesteps": total_timesteps,
             "simulate_latency": simulate_latency,
             "learning_rate": learning_rate,
-            "gamma": 0.99,
-            "lambda_": 0.95,
-            "ent_coef": 0.01,
+            "gamma": gamma,
+            "lambda_": lambda_,
+            "ent_coef": entropy_coef,
             "device": device,
             "algorithm": "SwiftTD",
             "training_mode": "sim_lat" if simulate_latency else "sim",
@@ -460,6 +552,14 @@ def train_agent(
             "feature_dim": 512,
             "n_stack": n_stack,
             "reduce_action_set": reduce_action_set,
+            "critic_initial_alpha": critic_initial_alpha,
+            "critic_eps": critic_eps,
+            "critic_max_step_size": critic_max_step_size,
+            "critic_step_decay": critic_step_decay,
+            "critic_meta_step_size": critic_meta_step_size,
+            "critic_eta_min": critic_eta_min,
+            "critic_feature_scale": critic_feature_scale,
+            "fail_on_nonfinite": fail_on_nonfinite,
         }
 
         wandb_run = wandb.init(
@@ -509,11 +609,18 @@ def train_agent(
         n_stack=n_stack,
         input_size=input_size,
         device=device,
-        lambda_=0.95,
-        gamma=0.99,
-        initial_alpha=learning_rate,
+        lambda_=lambda_,
+        gamma=gamma,
+        initial_alpha=critic_initial_alpha,
         learning_rate=learning_rate,
-        entropy_coef=0.01,
+        entropy_coef=entropy_coef,
+        eps=critic_eps,
+        max_step_size=critic_max_step_size,
+        step_size_decay=critic_step_decay,
+        meta_step_size=critic_meta_step_size,
+        eta_min=critic_eta_min,
+        critic_feature_scale=critic_feature_scale,
+        fail_on_nonfinite=fail_on_nonfinite,
     )
 
     if load_model_path and os.path.exists(load_model_path):
@@ -535,7 +642,17 @@ def train_agent(
     print(f"Environment: {env_name}")
     print(f"Total timesteps: {total_timesteps:,}")
     print(f"Device: {device}")
-    print(f"Learning rate: {learning_rate}")
+    print(f"Learning rate (actor/CNN): {learning_rate}")
+    print(f"Entropy coef: {entropy_coef}")
+    print(f"Gamma: {gamma}")
+    print(f"Lambda: {lambda_}")
+    print(f"Critic initial alpha: {critic_initial_alpha}")
+    print(f"Critic eps: {critic_eps}")
+    print(f"Critic max step size: {critic_max_step_size}")
+    print(f"Critic step decay: {critic_step_decay}")
+    print(f"Critic meta step size: {critic_meta_step_size}")
+    print(f"Critic eta min: {critic_eta_min}")
+    print(f"Critic feature scale: {critic_feature_scale}")
     if use_wandb and wandb_run:
         print(f"WandB: {wandb_run.url}")
     print(f"{'=' * 60}\n")
@@ -548,6 +665,7 @@ def train_agent(
         tensorboard_writer=writer,
         checkpoint_dir=checkpoint_dir,
         model_name=model_name,
+        wandb_run=wandb_run,
     )
 
     # Save final model
@@ -588,12 +706,23 @@ def main():
         "--device", type=str, default="cuda", choices=["cuda", "cpu", "mps"], help="Device to use for training"
     )
     parser.add_argument("--load-model", type=str, default=None, help="Path to pre-trained model to continue training")
-    parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate (default: 1e-4)")
+    parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate for actor/CNN (default: 1e-4)")
+    parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01)")
+    parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
+    parser.add_argument("--lambda_", type=float, default=0.95, help="TD(lambda) trace parameter for critic (default: 0.95)")
+    parser.add_argument("--critic-initial-alpha", type=float, default=1e-4, help="Initial SwiftTD step size alpha (default: 1e-4)")
+    parser.add_argument("--critic-eps", type=float, default=1e-8, help="SwiftTD epsilon threshold (default: 1e-5)")
+    parser.add_argument("--critic-max-step-size", type=float, default=0.01, help="SwiftTD max step size eta (default: 0.01)")
+    parser.add_argument("--critic-step-decay", type=float, default=0.9, help="SwiftTD step size decay factor (default: 0.9)")
+    parser.add_argument("--critic-meta-step-size", type=float, default=1e-4, help="SwiftTD meta step size (default: 1e-4)")
+    parser.add_argument("--critic-eta-min", type=float, default=1e-6, help="SwiftTD minimum eta (default: 1e-6)")
+    parser.add_argument("--critic-feature-scale", type=float, default=0.01, help="Scale factor applied to features before SwiftTD (default: 0.01)")
+    parser.add_argument("--fail-on-nonfinite", action="store_true", help="Raise on non-finite critic outputs instead of continuing")
     parser.add_argument("--n-stack", type=int, default=4, help="Number of frames to stack (default: 4)")
     parser.add_argument("--input-size", type=int, default=128, help="Input image size (default: 128)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
     parser.add_argument("--no-videos", action="store_true", help="Disable video recording (default: videos enabled)")
-    parser.add_argument("--video-freq", type=int, default=500, help="Record video every N episodes (default: 50)")
+    parser.add_argument("--video-freq", type=int, default=30, help="Record video every N episodes (default: 50)")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument(
         "--wandb-project", type=str, default="physical-atari", help="WandB project name (default: physical-atari)"
@@ -637,6 +766,17 @@ def main():
         f.write(f"\n# Training Hyperparameters\n")
         f.write(f"Device: {args.device}\n")
         f.write(f"Learning rate: {args.learning_rate}\n")
+        f.write(f"Entropy coef: {args.entropy_coef}\n")
+        f.write(f"Gamma: {args.gamma}\n")
+        f.write(f"Lambda: {args.lambda_}\n")
+        f.write(f"Critic initial alpha: {args.critic_initial_alpha}\n")
+        f.write(f"Critic eps: {args.critic_eps}\n")
+        f.write(f"Critic max step size: {args.critic_max_step_size}\n")
+        f.write(f"Critic step decay: {args.critic_step_decay}\n")
+        f.write(f"Critic meta step size: {args.critic_meta_step_size}\n")
+        f.write(f"Critic eta min: {args.critic_eta_min}\n")
+        f.write(f"Critic feature scale: {args.critic_feature_scale}\n")
+        f.write(f"Fail on non-finite: {args.fail_on_nonfinite}\n")
         f.write(f"N stack: {args.n_stack}\n")
         f.write(f"Input size: {args.input_size}\n")
         f.write(f"Seed: {args.seed}\n")
@@ -657,6 +797,17 @@ def main():
         experiment_dir=experiment_dir,
         device=args.device,
         learning_rate=args.learning_rate,
+        entropy_coef=args.entropy_coef,
+        gamma=args.gamma,
+        lambda_=args.lambda_,
+        critic_initial_alpha=args.critic_initial_alpha,
+        critic_eps=args.critic_eps,
+        critic_max_step_size=args.critic_max_step_size,
+        critic_step_decay=args.critic_step_decay,
+        critic_meta_step_size=args.critic_meta_step_size,
+        critic_eta_min=args.critic_eta_min,
+        critic_feature_scale=args.critic_feature_scale,
+        fail_on_nonfinite=args.fail_on_nonfinite,
         seed=args.seed,
         load_model_path=args.load_model,
         record_videos=not args.no_videos,

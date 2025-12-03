@@ -207,7 +207,7 @@ class SwiftTDAgent:
         gamma: float = 0.99,
         eps: float = 1e-5,
         max_step_size: float = 0.01,
-        step_size_decay: float = 0.9,
+        step_size_decay: float = 0.99,
         meta_step_size: float = 1e-4,
         eta_min: float = 1e-6,
         # Optimization
@@ -282,7 +282,7 @@ class SwiftTDAgent:
         self.prev_feature = feats_np[0]
 
     def _extract_features(self, obs_batch: np.ndarray) -> Tuple[torch.Tensor, np.ndarray]:
-        assert obs_batch.shape == (1, self.input_size, self.input_size, self.n_stack)
+        assert obs_batch.shape == (1, self.input_size, self.input_size, self.n_stack), f"obs_batch.shape is expected to be (1, {self.input_size}, {self.input_size}, {self.n_stack}), but got {obs_batch.shape}"
         obs_batch = np.transpose(obs_batch, (0, 3, 1, 2))
         obs_t = torch.as_tensor(
             obs_batch, device=self.device, dtype=torch.float32
@@ -324,9 +324,18 @@ class SwiftTDAgent:
 
         target_feats = np.zeros_like(next_feats_np[0]) if done else next_feats_np[0]  # CRITICAL_LINE absorbing-state handling
         V_next = self.critic.step(target_feats.tolist(), reward)  # CRITICAL_LINE SwiftTD update/query
-        assert isfinite(V_next), f"V_next is not finite: {V_next}"
+        if not isfinite(V_next):
+            feats_min = float(np.min(target_feats))
+            feats_max = float(np.max(target_feats))
+            feats_norm = float(np.linalg.norm(target_feats))
+            raise ValueError(
+                f"V_next is not finite: {V_next} "
+                f"(reward={reward}, done={done}, V_current={V_current}, "
+                f"feat_min={feats_min}, feat_max={feats_max}, feat_norm={feats_norm})"
+            )
         advantage = reward + (0.0 if done else self.gamma * V_next) - V_current  # CRITICAL_LINE TD error / advantage
-        assert isfinite(advantage), f"advantage is not finite: {advantage}"
+        value_target = reward + (0.0 if done else self.gamma * V_next)
+        return_error = (value_target - V_current) ** 2  # Squared TD target error
 
         # Update caches
         if done:
@@ -346,13 +355,17 @@ class SwiftTDAgent:
 
         self.optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.cnn.parameters(), max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.cnn.parameters(), max_norm=10.0)
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=10.0)
         self.optimizer.step()
 
         return {
             "actor_loss": float(actor_loss.detach().cpu().item()),
             "advantage": float(advantage),
+            "value_pred": float(V_current),
+            "value_next": float(V_next),
+            "value_target": float(value_target),
+            "return_error": float(return_error),
         }
 
     def save(self, path: str):

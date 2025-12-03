@@ -172,13 +172,14 @@ class LatencyModel:
         x = x @ self.pred_weight.T + self.pred_bias
         return x
 
-    def act(self, action):
+    def act(self, action, allowed_actions=None):
         """
         Accepts a new joystick action, updates the action queue, and returns
         the predicted action to execute (with latency effects).
 
         Args:
             action (ale_py.Action): The new joystick action.
+            allowed_actions (list[int] or None): If provided, restrict output to this set of action indices.
 
         Returns:
             ale_py.Action: The action to actually execute, based on the model's prediction.
@@ -190,6 +191,13 @@ class LatencyModel:
         self.action_queue.append(self.__one_hot_encode(action, self.last_action, 36))
         representation = np.array(self.action_queue).reshape(1, -1)
         logits = self.__forward(representation)
+
+        if allowed_actions is not None:
+            allowed_actions = list(allowed_actions)
+            masked_logits = np.full_like(logits, -np.inf)
+            masked_logits[0, allowed_actions] = logits[0, allowed_actions]
+            logits = masked_logits
+
         probs = np.exp(logits - np.max(logits))  # for numerical stability
         probs /= np.sum(probs)
         # sampled_action = int(np.random.choice(len(probs[0]), p=probs[0]))

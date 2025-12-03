@@ -40,14 +40,14 @@ def _make_agent(overrides=None):
         num_actions=4,
         feature_dim=512,
         actor_hidden_dim=256,
-        n_stack=1,  # Single frame for testing
+        n_stack=4,  # Single frame for testing
         input_size=128,
         device='cpu',
         # SwiftTD hyperparameters (aggressive for fast learning)
         lambda_=0.0,  # No eligibility traces for bandit
         gamma=0.0,  # Bandit-style (no discounting)
-        initial_alpha=1e-1,  # High learning rate for fast convergence
-        learning_rate=1e-2,  # High LR for actor
+        initial_alpha=1e-3,  # High learning rate for fast convergence
+        learning_rate=1e-3,  # High LR for actor
         entropy_coef=0.1,  # Higher entropy for exploration in tests
     )
 
@@ -68,7 +68,7 @@ def _make_obs():
         # Create a fixed non-zero observation for bandit tests
         # (all-zero observations lead to all-zero features, breaking SwiftTD learning)
         # Use a simple pattern so features are non-zero but consistent
-        _CACHED_OBS = np.ones((128, 128, 1), dtype=np.uint8) * 128
+        _CACHED_OBS = np.ones((128, 128, 4), dtype=np.uint8) * 128
     return _CACHED_OBS.copy()
 
 
@@ -115,8 +115,8 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
 
         obs = next_obs
 
-        if t % 64 == 0:
-            print(f"Step {t}: action={action}, reward={reward:.1f}, counts={action_counts}")
+        if t % 32 == 0:
+            print(f"Step {t}: action={action}, reward={reward:.1f}, counts={action_counts}, entropy={entropy.item():.3f}, log_probs={log_probs.item():.3f}")
 
     # Check final policy
     obs_test = _make_obs()
@@ -222,6 +222,8 @@ def test_value_function_learns_returns():
         # Deterministic reward
         reward = 1.0 if action == target_action else 0.0
 
+        v_pred = agent.prev_value  # Current critic prediction before update
+
         # Next observation
         next_obs = _make_obs()
         done = False
@@ -244,7 +246,7 @@ def test_value_function_learns_returns():
             recent_mean = np.mean(recent_advantages)
             recent_std = np.std(recent_advantages)
             print(f"Step {t}: action={action}, reward={reward:.1f}, "
-                  f"advantage={metrics['advantage']:.3f}, "
+                  f"V_pred={v_pred:.3f}, advantage={metrics['advantage']:.3f}, "
                   f"recent_adv_mean={recent_mean:.3f}±{recent_std:.3f}")
 
     # Check that advantages are trending toward zero (value function learning)
@@ -263,6 +265,52 @@ def test_value_function_learns_returns():
         f"Value function should learn: late advantages ({late_mean_abs:.3f}) should be smaller than early ({early_mean_abs:.3f})"
 
 
+def test_lifetime_return_error_decreases():
+    """
+    SwiftTD paper measures lifetime error of the return function.
+
+    This test approximates that metric by tracking the squared error
+    between the critic's prediction V(s) and the true one-step return
+    in a deterministic bandit (reward=+1 every step, gamma=0, no traces).
+    The cumulative error should shrink over training.
+    """
+    np.random.seed(3)
+    torch.manual_seed(3)
+
+    agent = _make_agent(overrides=dict(gamma=0.0, lambda_=0.0, entropy_coef=0.0))
+    obs = _make_obs()
+    agent.start_episodes(obs[np.newaxis])
+
+    true_return = 1.0  # With gamma=0 the return is the immediate reward
+    steps = 256
+    errors = []
+
+    for t in range(steps):
+        # Use the actor to stay close to real training flow
+        actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
+
+        # Lifetime error proxy: squared error of current value prediction
+        errors.append((true_return - agent.prev_value) ** 2)
+
+        # Deterministic reward, no terminals
+        agent.update(
+            obs[np.newaxis], actions, [true_return],
+            obs[np.newaxis], [False],
+            log_probs, entropy, feats
+        )
+
+        if t % 64 == 0:
+            print(f"Step {t}: V_pred={agent.prev_value:.3f}, "
+                  f"squared_error={(true_return - agent.prev_value) ** 2:.4f}")
+
+    early_error = np.mean(errors[:50])
+    late_error = np.mean(errors[-50:])
+
+    print(f"\nLifetime error decrease: early={early_error:.4f}, late={late_error:.4f}")
+    assert late_error < early_error, \
+        f"Lifetime return error should decrease: early={early_error:.4f}, late={late_error:.4f}"
+
+
 if __name__ == "__main__":
     # Run tests manually
     print("=" * 60)
@@ -279,6 +327,10 @@ if __name__ == "__main__":
 
     print("\n[Test 3/3] Value function learns returns...")
     test_value_function_learns_returns()
+    print("✓ PASSED")
+
+    print("\n[Test 4/4] Lifetime return error decreases...")
+    test_lifetime_return_error_decreases()
     print("✓ PASSED")
 
     print("\n" + "=" * 60)
