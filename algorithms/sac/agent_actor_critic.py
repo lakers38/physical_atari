@@ -179,7 +179,7 @@ class PolicyHead(nn.Module):
         """
         return self.network(features)
 
-class SwiftTDAgent:
+class SACAgent:
     """
     Shared actor (CNN + policy head) with learned value function.
     """
