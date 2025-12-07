@@ -36,4 +36,4 @@ videos/
 
 uv.lock
 **/.DS_Store
-
+*.pth

@@ -12,7 +12,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(__file__))
 
-from agent_actor_critic import SwiftTDAgent
+from agent_actor_critic import SACAgent
 
 # Import pytest only if available (for running via pytest)
 try:
@@ -53,7 +53,7 @@ def _make_agent(overrides=None):
     if overrides:
         params.update(overrides)
 
-    agent = SwiftTDAgent(**params)
+    agent = SACAgent(**params)
     return agent
 
 

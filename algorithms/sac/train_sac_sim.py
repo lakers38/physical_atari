@@ -8,7 +8,7 @@ This script trains the agent on Atari games with two modes:
 
 Flow (sim_lat mode):
     obs = env.step()
-    action = SwiftTDAgent.select_actions(obs)
+    action = SACAgent.select_actions(obs)
     delayed_action = LatencyModel.act(action)  # Simulates hardware latency
     obs, reward, done = env.step(delayed_action)
 """
@@ -37,7 +37,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wra
 from wrapper_v0_2 import LatencyModel
 
 sys.path.append(os.path.dirname(__file__))
-from agent_actor_critic import SwiftTDAgent
+from agent_actor_critic import SACAgent
 
 # Register ALE environments
 gym.register_envs(ale_py)
@@ -252,7 +252,7 @@ def create_single_atari_env(
     return env
 
 
-def evaluate_agent(agent: SwiftTDAgent, eval_env: gym.Env, n_episodes: int = 10) -> float:
+def evaluate_agent(agent: SACAgent, eval_env: gym.Env, n_episodes: int = 10) -> float:
     """Evaluate agent for n_episodes and return mean reward."""
     episode_rewards = []
 
@@ -280,7 +280,7 @@ def evaluate_agent(agent: SwiftTDAgent, eval_env: gym.Env, n_episodes: int = 10)
 
 
 def train_loop(
-    agent: SwiftTDAgent,
+    agent: SACAgent,
     env: gym.Env,
     eval_env: gym.Env,
     total_timesteps: int,
@@ -289,7 +289,7 @@ def train_loop(
     model_name: str,
     wandb_run=None,
 ):
-    """Custom training loop for SwiftTDAgent."""
+    """Custom training loop for SACAgent."""
     # Episode tracking
     episode_rewards = []
     episode_lengths = []
@@ -582,7 +582,7 @@ def train_agent(
     )
 
     # Create agent
-    agent = SwiftTDAgent(
+    agent = SACAgent(
         num_actions=env.action_space.n,
         feature_dim=512,
         actor_hidden_dim=256,
