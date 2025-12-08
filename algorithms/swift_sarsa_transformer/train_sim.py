@@ -203,7 +203,7 @@ class ResNetBackbone(FeatureBackbone):
             feats = self.model(x)
             # normalize features to zero mean and unit variance
             # feats = feats / (feats.norm(dim=1, keepdim=True) + 1e-8)
-            feats = feats / 10.0
+            feats = feats / 40.0
             return feats.squeeze(0).cpu().numpy().astype(np.float32)
 
 
@@ -217,16 +217,16 @@ class CartPoleIdentityBackbone(FeatureBackbone):
     Pole Angular Vel:   unbounded            (20 bins, clip at -5/5)
     Outputs a 1-hot concatenation of all 4 variable buckets: 80-dim binary.
     """
-    CART_POSITION_BINS = 20
-    CART_VELOCITY_BINS = 20
-    POLE_ANGLE_BINS = 20
-    POLE_ANGVEL_BINS = 20
+    CART_POSITION_BINS = 8
+    CART_VELOCITY_BINS = 8
+    POLE_ANGLE_BINS = 8
+    POLE_ANGVEL_BINS = 8
 
     CART_POSITION_MIN = -4.8
     CART_POSITION_MAX = 4.8
 
-    CART_VELOCITY_MIN = -3.0
-    CART_VELOCITY_MAX = 3.0
+    CART_VELOCITY_MIN = -5.0
+    CART_VELOCITY_MAX = 5.0
 
     POLE_ANGLE_MIN = -0.418
     POLE_ANGLE_MAX = 0.418
@@ -319,7 +319,9 @@ class SwiftSarsaConfig:
     epsilon: float
     eta_min: float
     exploration: str
-    eps_greedy: float
+    eps_greedy_start: float
+    eps_greedy_end: float
+    eps_greedy_end_timestamp: int
     softmax_temp: float
 
 
@@ -340,7 +342,14 @@ class SwiftSarsaAgent:
             cfg.eta_min,
         )
 
-    def select_action(self, feature_vec: np.ndarray) -> Tuple[int, List[float], float]:
+    def _compute_epsilon(self, global_step: int) -> float:
+        """Linearly interpolate epsilon from start to end over the schedule."""
+        if global_step >= self.cfg.eps_greedy_end_timestamp:
+            return self.cfg.eps_greedy_end
+        progress = global_step / max(self.cfg.eps_greedy_end_timestamp, 1)
+        return self.cfg.eps_greedy_start + progress * (self.cfg.eps_greedy_end - self.cfg.eps_greedy_start)
+
+    def select_action(self, feature_vec: np.ndarray, global_step: int = 0) -> Tuple[int, List[float], float, float]:
         features = dense_to_sparse(feature_vec)
         values = self.algo.get_action_values(features)
         entropy = 0.0
@@ -349,18 +358,19 @@ class SwiftSarsaAgent:
             probs = torch.softmax(logits / max(self.cfg.softmax_temp, 1e-6), dim=0)
             action = int(torch.multinomial(probs, 1).item())
             entropy = float(-(probs * probs.clamp_min(1e-12).log()).sum().item())
+            eps_greedy = 0.0  # not used for softmax
         else:
-            self.cfg.eps_greedy = max(0.01, self.cfg.eps_greedy * 0.9995)
-            if random.random() < self.cfg.eps_greedy:
+            eps_greedy = self._compute_epsilon(global_step)
+            if random.random() < eps_greedy:
                 action = random.randrange(self.num_actions)
             else:
                 action = int(np.argmax(values))
             # epsilon-greedy distribution entropy
-            p_rand = self.cfg.eps_greedy / self.num_actions
-            p_greedy = 1.0 - self.cfg.eps_greedy + p_rand
+            p_rand = eps_greedy / self.num_actions
+            p_greedy = 1.0 - eps_greedy + p_rand
             entropy = float(-(p_greedy * math.log(max(p_greedy, 1e-12)) +
                               (self.num_actions - 1) * p_rand * math.log(max(p_rand, 1e-12))))
-        return action, values, entropy
+        return action, values, entropy, eps_greedy
 
     def learn(self, feature_vec: np.ndarray, reward: float, gamma: float, action: int) -> float:
         features = dense_to_sparse(feature_vec)
@@ -448,9 +458,9 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
     for _ in range(args.frame_stack):
         feat_queue.append(first_feat)
     stacked = stack_features(feat_queue)
-    action, values, entropy = agent.select_action(stacked)
 
     global_step = 0
+    action, values, entropy, current_eps = agent.select_action(stacked, global_step)
     episode_reward = 0.0
     episode_len = 0
     episode_q_vals: List[float] = []
@@ -529,6 +539,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
                     "env/td_error_mean": float(delta_arr.mean()),
                     "env/td_error_min": delta_min,
                     "env/td_error_max": delta_max,
+                    "exploration/epsilon_greedy": current_eps,
                 }
                 wandb_log.update(collect_swiftsarsa_stats(agent))
                 wandb_run.log(wandb_log)
@@ -549,14 +560,14 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
             for _ in range(args.frame_stack):
                 feat_queue.append(reset_feat)
             stacked = stack_features(feat_queue)
-            action, values, entropy = agent.select_action(stacked)
+            action, values, entropy, current_eps = agent.select_action(stacked, global_step)
         else:
             t_inf = time.time()
             new_feat = backbone(next_obs)
             inference_timing.append(time.time() - t_inf)
             feat_queue.append(new_feat)
             stacked = stack_features(feat_queue)
-            action, values, entropy = agent.select_action(stacked)
+            action, values, entropy, current_eps = agent.select_action(stacked, global_step)
 
         global_step += 1
         timing_window.append(env_step_time)
@@ -603,7 +614,7 @@ def parse_args():
     parser.add_argument("--noop_max", type=int, default=30)
     parser.add_argument("--reduce_action_set", type=int, default=2)
     parser.add_argument("--video_path", type=str, default=None)
-    parser.add_argument("--video_freq", type=int, default=50)
+    parser.add_argument("--video_freq", type=int, default=250)
     parser.add_argument("--video_length", type=int, default=500)
     parser.add_argument("--no_videos", action="store_true")
     parser.add_argument("--output_dir", type=str, default="outputs/swift_sarsa_transformer")
@@ -622,7 +633,9 @@ def parse_args():
     parser.add_argument("--eta", type=float, default=1.0)
     parser.add_argument("--eta_min", type=float, default=1e-8)
     parser.add_argument("--exploration", type=str, choices=["epsilon_greedy", "softmax"], default="softmax")
-    parser.add_argument("--eps_greedy", type=float, default=0.05)
+    parser.add_argument("--eps_greedy_start", type=float, default=1.0)
+    parser.add_argument("--eps_greedy_end", type=float, default=0.05)
+    parser.add_argument("--eps_greedy_end_timestamp", type=int, default=100000)
     parser.add_argument("--epsilon", type=float, default=0.10)
     parser.add_argument("--softmax_temp", type=float, default=.1)
 
@@ -683,7 +696,9 @@ def main():
         epsilon=args.epsilon,
         eta_min=args.eta_min,
         exploration=args.exploration,
-        eps_greedy=args.eps_greedy,
+        eps_greedy_start=args.eps_greedy_start,
+        eps_greedy_end=args.eps_greedy_end,
+        eps_greedy_end_timestamp=args.eps_greedy_end_timestamp,
         softmax_temp=args.softmax_temp,
     )
     num_actions = env.action_space.n
