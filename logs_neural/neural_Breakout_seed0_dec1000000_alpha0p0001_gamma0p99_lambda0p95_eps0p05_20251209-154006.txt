@@ -1,0 +1,54 @@
+Logging to logs_neural/neural_Breakout_seed0_dec1000000_alpha0p0001_gamma0p99_lambda0p95_eps0p05_20251209-154006.txt
+--- Configuration ---
+ROM: Breakout
+Device: cpu
+Neural Features: True
+Seed: 0
+Alpha: 0.0001
+Meta-step: 0.001
+Eta: 0.03
+Gamma: 0.99
+Lambda: 0.95
+Epsilon: start=1.0 end=0.05 decay_steps=1000000
+Frame skip: 4
+Imprinting: False
+---------------------
+Action set: env action space (minimal set unavailable) (18 actions)
+Action meanings: ['NOOP', 'FIRE', 'UP', 'RIGHT', 'LEFT', 'DOWN', 'UPRIGHT', 'UPLEFT', 'DOWNRIGHT', 'DOWNLEFT', 'UPFIRE', 'RIGHTFIRE', 'LEFTFIRE', 'DOWNFIRE', 'UPRIGHTFIRE', 'UPLEFTFIRE', 'DOWNRIGHTFIRE', 'DOWNLEFTFIRE']
+Feature dim: total=50721, active≈50721
+Ep 0: Reward=3.0, Mean100=3.0, Steps=277
+Ep 1: Reward=4.0, Mean100=3.5, Steps=555
+Ep 2: Reward=1.0, Mean100=2.7, Steps=748
+Ep 3: Reward=1.0, Mean100=2.2, Steps=929
+Ep 4: Reward=1.0, Mean100=2.0, Steps=1080
+Ep 5: Reward=2.0, Mean100=2.0, Steps=1285
+Ep 6: Reward=1.0, Mean100=1.9, Steps=1470
+Ep 7: Reward=3.0, Mean100=2.0, Steps=1727
+Ep 8: Reward=2.0, Mean100=2.0, Steps=1931
+Ep 9: Reward=0.0, Mean100=1.8, Steps=2100
+Ep 10: Reward=2.0, Mean100=1.8, Steps=2317
+Ep 11: Reward=1.0, Mean100=1.8, Steps=2490
+Ep 12: Reward=2.0, Mean100=1.8, Steps=2701
+Ep 13: Reward=2.0, Mean100=1.8, Steps=2929
+Ep 14: Reward=5.0, Mean100=2.0, Steps=3252
+Ep 15: Reward=1.0, Mean100=1.9, Steps=3417
+Ep 16: Reward=0.0, Mean100=1.8, Steps=3554
+Ep 17: Reward=0.0, Mean100=1.7, Steps=3695
+Ep 18: Reward=2.0, Mean100=1.7, Steps=3924
+Ep 19: Reward=1.0, Mean100=1.7, Steps=4101
+Ep 20: Reward=3.0, Mean100=1.8, Steps=4334
+Ep 21: Reward=0.0, Mean100=1.7, Steps=4475
+Ep 22: Reward=2.0, Mean100=1.7, Steps=4710
+Ep 23: Reward=0.0, Mean100=1.6, Steps=4840
+Ep 24: Reward=3.0, Mean100=1.7, Steps=5097
+Ep 25: Reward=2.0, Mean100=1.7, Steps=5310
+Ep 26: Reward=2.0, Mean100=1.7, Steps=5511
+Ep 27: Reward=1.0, Mean100=1.7, Steps=5672
+Ep 28: Reward=2.0, Mean100=1.7, Steps=5881
+Ep 29: Reward=1.0, Mean100=1.7, Steps=6052
+Ep 30: Reward=8.0, Mean100=1.9, Steps=6365
+Ep 31: Reward=2.0, Mean100=1.9, Steps=6570
+Ep 32: Reward=4.0, Mean100=1.9, Steps=6895
+Ep 33: Reward=3.0, Mean100=2.0, Steps=7168
+Ep 34: Reward=0.0, Mean100=1.9, Steps=7290
+Ep 35: Reward=4.0, Mean100=2.0, Steps=7569

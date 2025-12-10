@@ -1,0 +1,8 @@
+Action set: env action space (minimal set unavailable) (18 actions)
+Logging to logs/neural_Pong_seed0_dec1000000_cnn512_alpha0p0001_ts20251209-155217.txt
+--- Configuration ---
+ROM: Pong
+Total Features: 533
+Initial Energy:  0.0533
+WARNING: Unsafe initialization! C++ Kill Switch will trigger.
+---------------------

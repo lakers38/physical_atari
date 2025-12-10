@@ -1,0 +1,41 @@
+/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/gymnasium/envs/registration.py:596: UserWarning: [33mWARN: plugin: shimmy.registration:register_gymnasium_envs raised Traceback (most recent call last):
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/gymnasium/envs/registration.py", line 594, in load_plugin_envs
+    fn()
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/shimmy/registration.py", line 263, in register_gymnasium_envs
+    _register_atari_envs()
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/shimmy/registration.py", line 168, in _register_atari_envs
+    import ale_py
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/ale_py/__init__.py", line 68, in <module>
+    register_v0_v4_envs()
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/ale_py/registration.py", line 178, in register_v0_v4_envs
+    _register_rom_configs(legacy_games, obs_types, versions)
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/ale_py/registration.py", line 63, in _register_rom_configs
+    gymnasium.register(
+    ^^^^^^^^^^^^^^^^^^
+AttributeError: partially initialized module 'gymnasium' has no attribute 'register' (most likely due to a circular import)
+[0m
+  logger.warn(f"plugin: {plugin.value} raised {traceback.format_exc()}")
+A.L.E: Arcade Learning Environment (version 0.10.1+unknown)
+[Powered by Stella]
+
+Action meanings: ['NOOP', 'FIRE', 'UP', 'RIGHT', 'LEFT', 'DOWN', 'UPRIGHT', 'UPLEFT', 'DOWNRIGHT', 'DOWNLEFT', 'UPFIRE', 'RIGHTFIRE', 'LEFTFIRE', 'DOWNFIRE', 'UPRIGHTFIRE', 'UPLEFTFIRE', 'DOWNRIGHTFIRE', 'DOWNLEFTFIRE']
+Feature stats: total=201604, active_per_frame≈25201, alpha=1e-07, alpha*active≈2.520e-03
+Memory capacity: 5000 (patterns=24)
+Base features: 201604, Total: 206604
+ep 0  reward -21.0  ema -21.00  step 191  avg_q -0.662  max_q -0.602  td_ema -0.110  actions [66, 68, 57]  learn  mem_feats=0
+ep 1  reward -21.0  ema -21.00  step 382  avg_q -2.356  max_q -2.279  td_ema -0.004  actions [133, 136, 113]  learn  mem_feats=0
+ep 2  reward -21.0  ema -21.00  step 573  avg_q -4.236  max_q -3.979  td_ema 0.199  actions [207, 200, 166]  learn  mem_feats=0
+ep 3  reward -21.0  ema -21.00  step 764  avg_q -5.283  max_q -3.804  td_ema 0.297  actions [273, 268, 223]  learn  mem_feats=0
+ep 4  reward -21.0  ema -21.00  step 955  avg_q -5.568  max_q -4.371  td_ema 0.342  actions [358, 339, 258]  learn  mem_feats=0
+Imprinter debug: tau_t=1.36e+10, eta=1.0, parents=0, max_w_active=1.63e-03, thresh=0.05
+step 1000  ep_rew -4.0  avg_q -6.371  max_q -5.493  mem_feats=0
+ep 5  reward -21.0  ema -21.00  step 1146  avg_q -5.967  max_q -4.571  td_ema 0.319  actions [428, 433, 285]  learn  mem_feats=0
+ep 6  reward -21.0  ema -21.00  step 1337  avg_q -4.952  max_q -4.366  td_ema 0.295  actions [467, 517, 353]  learn  mem_feats=0
+ep 7  reward -21.0  ema -21.00  step 1528  avg_q -5.448  max_q -4.116  td_ema 0.302  actions [529, 577, 422]  learn  mem_feats=0
+ep 8  reward -21.0  ema -21.00  step 1719  avg_q -5.870  max_q -4.609  td_ema 0.288  actions [607, 647, 465]  learn  mem_feats=0
+ep 9  reward -21.0  ema -21.00  step 1910  avg_q -5.829  max_q -4.489  td_ema 0.286  actions [655, 732, 523]  learn  mem_feats=0
+Imprinter debug: tau_t=7.77e+10, eta=1.0, parents=0, max_w_active=2.36e-02, thresh=0.05
+step 2000  ep_rew -9.0  avg_q -7.870  max_q -7.672  mem_feats=0
+
+Training finished. Episodes: 10
+

@@ -1,0 +1,160 @@
+Action set: env action space (minimal set unavailable) (18 actions)
+Logging to logs/neural_Pong_seed0_dec1000000_alpha1e-05_ts20251209-175449.txt
+--- Configuration ---
+ROM: Pong
+Total Features: 201621 (conv=201600, extra=21, use_conv=False)
+Initial Energy:  2.0162
+WARNING: Unsafe initialization! C++ Kill Switch will trigger.
+---------------------
+[debug] step=0 feat_mean=0.0000 feat_std=0.0000 raw_mean=0.1250 raw_std=0.3307 num_active=0
+[debug] step=0 weight_mean=0.000000 weight_std=0.000000
+Ep 0: reward=-21.0 mean_last_100=-21.00 step=764
+[debug] step=1000 weight_mean=-0.000012 weight_std=0.000031
+Ep 1: reward=-21.0 mean_last_100=-21.00 step=1528
+[debug] step=2000 weight_mean=-0.000024 weight_std=0.000064
+Ep 2: reward=-21.0 mean_last_100=-21.00 step=2292
+[debug] step=3000 weight_mean=-0.000038 weight_std=0.000100
+Ep 3: reward=-21.0 mean_last_100=-21.00 step=3056
+Ep 4: reward=-21.0 mean_last_100=-21.00 step=3848
+[debug] step=4000 weight_mean=-0.000046 weight_std=0.000118
+Ep 5: reward=-21.0 mean_last_100=-21.00 step=4612
+[debug] step=5000 weight_mean=-0.000058 weight_std=0.000151
+Ep 6: reward=-21.0 mean_last_100=-21.00 step=5436
+[debug] step=6000 weight_mean=-0.000066 weight_std=0.000171
+Ep 7: reward=-20.0 mean_last_100=-20.88 step=6278
+Ep 8: reward=-21.0 mean_last_100=-20.89 step=7042
+Ep 9: reward=-21.0 mean_last_100=-20.90 step=7868
+[debug] step=8000 weight_mean=-0.000081 weight_std=0.000206
+Ep 10: reward=-21.0 mean_last_100=-20.91 step=8632
+[debug] step=9000 weight_mean=-0.000088 weight_std=0.000223
+Ep 11: reward=-21.0 mean_last_100=-20.92 step=9517
+Ep 12: reward=-21.0 mean_last_100=-20.92 step=10310
+Ep 13: reward=-21.0 mean_last_100=-20.93 step=11192
+[debug] step=12000 weight_mean=-0.000110 weight_std=0.000277
+Ep 14: reward=-21.0 mean_last_100=-20.93 step=12016
+Ep 15: reward=-21.0 mean_last_100=-20.94 step=12867
+Ep 16: reward=-21.0 mean_last_100=-20.94 step=13719
+Ep 17: reward=-21.0 mean_last_100=-20.94 step=14722
+Ep 18: reward=-21.0 mean_last_100=-20.95 step=15486
+Ep 19: reward=-21.0 mean_last_100=-20.95 step=16329
+Ep 20: reward=-21.0 mean_last_100=-20.95 step=17182
+Ep 21: reward=-20.0 mean_last_100=-20.91 step=18053
+Ep 22: reward=-21.0 mean_last_100=-20.91 step=18965
+Ep 23: reward=-21.0 mean_last_100=-20.92 step=19849
+Ep 24: reward=-21.0 mean_last_100=-20.92 step=20613
+Ep 25: reward=-18.0 mean_last_100=-20.81 step=21886
+Ep 26: reward=-20.0 mean_last_100=-20.78 step=23060
+Ep 27: reward=-21.0 mean_last_100=-20.79 step=23886
+Ep 28: reward=-19.0 mean_last_100=-20.72 step=25023
+Ep 29: reward=-19.0 mean_last_100=-20.67 step=26100
+Ep 30: reward=-21.0 mean_last_100=-20.68 step=26926
+Ep 31: reward=-20.0 mean_last_100=-20.66 step=27885
+Ep 32: reward=-21.0 mean_last_100=-20.67 step=28709
+Ep 33: reward=-19.0 mean_last_100=-20.62 step=29787
+Ep 34: reward=-21.0 mean_last_100=-20.63 step=30734
+Ep 35: reward=-21.0 mean_last_100=-20.64 step=31647
+Ep 36: reward=-21.0 mean_last_100=-20.65 step=32533
+Ep 37: reward=-21.0 mean_last_100=-20.66 step=33387
+Ep 38: reward=-21.0 mean_last_100=-20.67 step=34412
+[debug] step=35000 weight_mean=-0.000212 weight_std=0.001331
+Ep 39: reward=-20.0 mean_last_100=-20.65 step=35331
+Ep 40: reward=-20.0 mean_last_100=-20.63 step=36279
+Ep 41: reward=-19.0 mean_last_100=-20.60 step=37293
+Ep 42: reward=-21.0 mean_last_100=-20.60 step=38419
+Ep 43: reward=-20.0 mean_last_100=-20.59 step=39443
+Ep 44: reward=-21.0 mean_last_100=-20.60 step=40267
+Ep 45: reward=-21.0 mean_last_100=-20.61 step=41215
+Ep 46: reward=-20.0 mean_last_100=-20.60 step=42118
+Ep 47: reward=-20.0 mean_last_100=-20.58 step=42956
+[debug] step=43000 weight_mean=-0.000241 weight_std=0.002174
+[debug] step=44000 weight_mean=-0.000244 weight_std=0.002193
+Ep 48: reward=-20.0 mean_last_100=-20.57 step=44025
+Ep 49: reward=-21.0 mean_last_100=-20.58 step=44849
+Ep 50: reward=-21.0 mean_last_100=-20.59 step=45674
+Ep 51: reward=-21.0 mean_last_100=-20.60 step=46499
+Ep 52: reward=-21.0 mean_last_100=-20.60 step=47353
+Ep 53: reward=-21.0 mean_last_100=-20.61 step=48239
+Ep 54: reward=-21.0 mean_last_100=-20.62 step=49065
+Ep 55: reward=-21.0 mean_last_100=-20.62 step=49890
+Ep 56: reward=-21.0 mean_last_100=-20.63 step=50734
+Ep 57: reward=-21.0 mean_last_100=-20.64 step=51743
+Ep 58: reward=-21.0 mean_last_100=-20.64 step=52585
+Ep 59: reward=-21.0 mean_last_100=-20.65 step=53550
+Ep 60: reward=-20.0 mean_last_100=-20.64 step=54534
+Ep 61: reward=-21.0 mean_last_100=-20.65 step=55418
+Ep 62: reward=-20.0 mean_last_100=-20.63 step=56428
+[debug] step=57000 weight_mean=-0.000288 weight_std=0.003970
+Ep 63: reward=-21.0 mean_last_100=-20.64 step=57343
+Ep 64: reward=-21.0 mean_last_100=-20.65 step=58229
+Ep 65: reward=-20.0 mean_last_100=-20.64 step=59223
+Ep 66: reward=-20.0 mean_last_100=-20.63 step=60199
+Ep 67: reward=-21.0 mean_last_100=-20.63 step=61023
+Ep 68: reward=-21.0 mean_last_100=-20.64 step=61805
+Ep 69: reward=-21.0 mean_last_100=-20.64 step=62658
+Ep 70: reward=-21.0 mean_last_100=-20.65 step=63468
+[debug] step=64000 weight_mean=-0.000312 weight_std=0.004820
+Ep 71: reward=-21.0 mean_last_100=-20.65 step=64353
+Ep 72: reward=-21.0 mean_last_100=-20.66 step=65179
+Ep 73: reward=-21.0 mean_last_100=-20.66 step=66214
+Ep 74: reward=-21.0 mean_last_100=-20.67 step=66978
+Ep 75: reward=-20.0 mean_last_100=-20.66 step=67932
+[debug] step=68000 weight_mean=-0.000328 weight_std=0.005541
+Ep 76: reward=-21.0 mean_last_100=-20.66 step=68756
+[debug] step=69000 weight_mean=-0.000330 weight_std=0.005691
+Ep 77: reward=-20.0 mean_last_100=-20.65 step=69951
+Ep 78: reward=-20.0 mean_last_100=-20.65 step=70839
+Ep 79: reward=-21.0 mean_last_100=-20.65 step=71603
+Ep 80: reward=-21.0 mean_last_100=-20.65 step=72367
+Ep 81: reward=-20.0 mean_last_100=-20.65 step=73268
+[debug] step=74000 weight_mean=-0.000350 weight_std=0.006635
+Ep 82: reward=-21.0 mean_last_100=-20.65 step=74032
+Ep 83: reward=-21.0 mean_last_100=-20.65 step=74942
+Ep 84: reward=-21.0 mean_last_100=-20.66 step=75854
+Ep 85: reward=-21.0 mean_last_100=-20.66 step=76922
+Ep 86: reward=-21.0 mean_last_100=-20.67 step=77867
+Ep 87: reward=-20.0 mean_last_100=-20.66 step=78787
+Ep 88: reward=-21.0 mean_last_100=-20.66 step=79551
+Ep 89: reward=-21.0 mean_last_100=-20.67 step=80343
+Ep 90: reward=-21.0 mean_last_100=-20.67 step=81228
+[debug] step=82000 weight_mean=-0.000383 weight_std=0.008569
+Ep 91: reward=-21.0 mean_last_100=-20.67 step=82141
+Ep 92: reward=-21.0 mean_last_100=-20.68 step=82965
+Ep 93: reward=-21.0 mean_last_100=-20.68 step=83729
+Ep 94: reward=-21.0 mean_last_100=-20.68 step=84554
+Ep 95: reward=-21.0 mean_last_100=-20.69 step=85439
+Ep 96: reward=-21.0 mean_last_100=-20.69 step=86341
+Ep 97: reward=-21.0 mean_last_100=-20.69 step=87133
+Ep 98: reward=-20.0 mean_last_100=-20.69 step=88095
+Ep 99: reward=-21.0 mean_last_100=-20.69 step=88915
+Ep 100: reward=-21.0 mean_last_100=-20.69 step=89735
+Ep 101: reward=-21.0 mean_last_100=-20.69 step=90546
+Ep 102: reward=-20.0 mean_last_100=-20.68 step=91506
+Ep 103: reward=-20.0 mean_last_100=-20.67 step=92377
+Ep 104: reward=-21.0 mean_last_100=-20.67 step=93141
+Ep 105: reward=-21.0 mean_last_100=-20.67 step=93905
+Ep 106: reward=-21.0 mean_last_100=-20.67 step=94669
+Ep 107: reward=-21.0 mean_last_100=-20.68 step=95530
+Ep 108: reward=-20.0 mean_last_100=-20.67 step=96487
+Ep 109: reward=-21.0 mean_last_100=-20.67 step=97251
+Ep 110: reward=-19.0 mean_last_100=-20.65 step=98220
+Ep 111: reward=-21.0 mean_last_100=-20.65 step=98984
+[debug] step=99000 weight_mean=-0.000475 weight_std=0.013957
+Ep 112: reward=-21.0 mean_last_100=-20.65 step=99865
+Ep 113: reward=-21.0 mean_last_100=-20.65 step=100685
+Ep 114: reward=-21.0 mean_last_100=-20.65 step=101509
+Ep 115: reward=-21.0 mean_last_100=-20.65 step=102273
+Ep 116: reward=-21.0 mean_last_100=-20.65 step=103037
+Ep 117: reward=-21.0 mean_last_100=-20.65 step=103830
+Ep 118: reward=-20.0 mean_last_100=-20.64 step=104728
+[debug] step=105000 weight_mean=-0.000521 weight_std=0.017200
+Ep 119: reward=-21.0 mean_last_100=-20.64 step=105520
+[debug] step=106000 weight_mean=-0.000527 weight_std=0.017595
+Ep 120: reward=-20.0 mean_last_100=-20.63 step=106376
+[debug] step=107000 weight_mean=-0.000535 weight_std=0.017968
+Ep 121: reward=-21.0 mean_last_100=-20.64 step=107140
+[debug] step=108000 weight_mean=-0.000542 weight_std=0.018317
+Ep 122: reward=-20.0 mean_last_100=-20.63 step=108061
+Ep 123: reward=-21.0 mean_last_100=-20.63 step=108825
+Ep 124: reward=-20.0 mean_last_100=-20.62 step=109696
+[debug] step=110000 weight_mean=-0.000560 weight_std=0.019911
+Ep 125: reward=-20.0 mean_last_100=-20.64 step=110618

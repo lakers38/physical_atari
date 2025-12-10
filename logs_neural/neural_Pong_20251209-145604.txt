@@ -1,0 +1,6 @@
+Starting Neural Swift-SARSA Simulation
+ROM: Pong, Device: cpu, Neural: True
+Action space: 18
+Ep 0: Reward=-20.0, Mean100=-20.0, Steps=902
+Ep 1: Reward=-1.0, Mean100=-10.5, Steps=1000
+Finished 1000 steps.

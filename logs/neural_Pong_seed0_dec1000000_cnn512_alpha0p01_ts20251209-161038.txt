@@ -1,0 +1,28 @@
+Action set: env action space (minimal set unavailable) (18 actions)
+Logging to logs/neural_Pong_seed0_dec1000000_cnn512_alpha0p01_ts20251209-161038.txt
+--- Configuration ---
+ROM: Pong
+Total Features: 533
+Initial Energy:  5.3300
+WARNING: Unsafe initialization! C++ Kill Switch will trigger.
+---------------------
+Ep 0: reward=-20.0 mean_last_100=-20.00 step=843
+Ep 1: reward=-21.0 mean_last_100=-20.50 step=1635
+Ep 2: reward=-21.0 mean_last_100=-20.67 step=2399
+Ep 3: reward=-21.0 mean_last_100=-20.75 step=3428
+Ep 4: reward=-21.0 mean_last_100=-20.80 step=4253
+Ep 5: reward=-21.0 mean_last_100=-20.83 step=5045
+Ep 6: reward=-21.0 mean_last_100=-20.86 step=5809
+Ep 7: reward=-21.0 mean_last_100=-20.88 step=6573
+Ep 8: reward=-21.0 mean_last_100=-20.89 step=7397
+Ep 9: reward=-21.0 mean_last_100=-20.90 step=8221
+Ep 10: reward=-21.0 mean_last_100=-20.91 step=9065
+Ep 11: reward=-21.0 mean_last_100=-20.92 step=9890
+Ep 12: reward=-21.0 mean_last_100=-20.92 step=10742
+Ep 13: reward=-21.0 mean_last_100=-20.93 step=11525
+Ep 14: reward=-21.0 mean_last_100=-20.93 step=12308
+Ep 15: reward=-21.0 mean_last_100=-20.94 step=13119
+Ep 16: reward=-21.0 mean_last_100=-20.94 step=14000
+Ep 17: reward=-21.0 mean_last_100=-20.94 step=14764
+Ep 18: reward=-21.0 mean_last_100=-20.95 step=15528
+Ep 19: reward=-21.0 mean_last_100=-20.95 step=16292

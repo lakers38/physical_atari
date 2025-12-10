@@ -1,0 +1,14 @@
+Logging to logs_neural/neural_Pong_seed0_dec1000_alpha0p0001_gamma0p99_lambda0p9_eps0p1_20251209-145731.txt
+--- Configuration ---
+ROM: Pong
+Device: cpu
+Neural Features: True
+Seed: 0
+Alpha: 0.0001
+Gamma: 0.99
+Lambda: 0.9
+Epsilon: 0.1
+---------------------
+Action space: 18
+Ep 0: Reward=-20.0, Mean100=-20.0, Steps=902
+Ep 1: Reward=-1.0, Mean100=-10.5, Steps=1000

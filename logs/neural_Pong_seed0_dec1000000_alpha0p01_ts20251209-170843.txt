@@ -1,0 +1,84 @@
+Action set: env action space (minimal set unavailable) (18 actions)
+Logging to logs/neural_Pong_seed0_dec1000000_alpha0p01_ts20251209-170843.txt
+--- Configuration ---
+ROM: Pong
+Total Features: 52021 (conv=52000, extra=21)
+Initial Energy:  520.2100
+WARNING: Unsafe initialization! C++ Kill Switch will trigger.
+---------------------
+Ep 0: reward=-21.0 mean_last_100=-21.00 step=764
+Ep 1: reward=-21.0 mean_last_100=-21.00 step=1528
+Ep 2: reward=-21.0 mean_last_100=-21.00 step=2292
+Ep 3: reward=-21.0 mean_last_100=-21.00 step=3056
+Ep 4: reward=-21.0 mean_last_100=-21.00 step=3848
+Ep 5: reward=-21.0 mean_last_100=-21.00 step=4612
+Ep 6: reward=-19.0 mean_last_100=-20.71 step=5533
+Ep 7: reward=-21.0 mean_last_100=-20.75 step=6297
+Ep 8: reward=-21.0 mean_last_100=-20.78 step=7168
+Ep 9: reward=-21.0 mean_last_100=-20.80 step=7950
+Ep 10: reward=-20.0 mean_last_100=-20.73 step=8866
+Ep 11: reward=-21.0 mean_last_100=-20.75 step=9659
+Ep 12: reward=-21.0 mean_last_100=-20.77 step=10511
+Ep 13: reward=-21.0 mean_last_100=-20.79 step=11344
+Ep 14: reward=-20.0 mean_last_100=-20.73 step=12294
+Ep 15: reward=-19.0 mean_last_100=-20.62 step=13303
+Ep 16: reward=-21.0 mean_last_100=-20.65 step=14127
+Ep 17: reward=-20.0 mean_last_100=-20.61 step=15006
+Ep 18: reward=-21.0 mean_last_100=-20.63 step=15832
+Ep 19: reward=-21.0 mean_last_100=-20.65 step=16686
+Ep 20: reward=-20.0 mean_last_100=-20.62 step=17724
+Ep 21: reward=-20.0 mean_last_100=-20.59 step=18562
+Ep 22: reward=-19.0 mean_last_100=-20.52 step=19678
+Ep 23: reward=-21.0 mean_last_100=-20.54 step=20470
+Ep 24: reward=-19.0 mean_last_100=-20.48 step=21438
+Ep 25: reward=-21.0 mean_last_100=-20.50 step=22292
+Ep 26: reward=-17.0 mean_last_100=-20.37 step=23513
+Ep 27: reward=-21.0 mean_last_100=-20.39 step=24435
+Ep 28: reward=-21.0 mean_last_100=-20.41 step=25218
+Ep 29: reward=-21.0 mean_last_100=-20.43 step=26190
+Ep 30: reward=-21.0 mean_last_100=-20.45 step=27014
+Ep 31: reward=-20.0 mean_last_100=-20.44 step=27978
+Ep 32: reward=-21.0 mean_last_100=-20.45 step=28802
+Ep 33: reward=-20.0 mean_last_100=-20.44 step=29884
+Ep 34: reward=-19.0 mean_last_100=-20.40 step=30865
+Ep 35: reward=-19.0 mean_last_100=-20.36 step=31804
+Ep 36: reward=-21.0 mean_last_100=-20.38 step=32828
+Ep 37: reward=-19.0 mean_last_100=-20.34 step=33859
+Ep 38: reward=-19.0 mean_last_100=-20.31 step=34842
+Ep 39: reward=-20.0 mean_last_100=-20.30 step=35748
+Ep 40: reward=-21.0 mean_last_100=-20.32 step=36540
+Ep 41: reward=-21.0 mean_last_100=-20.33 step=37579
+Ep 42: reward=-20.0 mean_last_100=-20.33 step=38423
+Ep 43: reward=-20.0 mean_last_100=-20.32 step=39374
+Ep 44: reward=-21.0 mean_last_100=-20.33 step=40262
+Ep 45: reward=-20.0 mean_last_100=-20.33 step=41141
+Ep 46: reward=-21.0 mean_last_100=-20.34 step=41967
+Ep 47: reward=-20.0 mean_last_100=-20.33 step=42872
+Ep 48: reward=-19.0 mean_last_100=-20.31 step=43962
+Ep 49: reward=-21.0 mean_last_100=-20.32 step=44754
+Ep 50: reward=-21.0 mean_last_100=-20.33 step=45578
+Ep 51: reward=-21.0 mean_last_100=-20.35 step=46402
+Ep 52: reward=-21.0 mean_last_100=-20.36 step=47275
+Ep 53: reward=-18.0 mean_last_100=-20.31 step=48337
+Ep 54: reward=-20.0 mean_last_100=-20.31 step=49469
+Ep 55: reward=-21.0 mean_last_100=-20.32 step=50295
+Ep 56: reward=-21.0 mean_last_100=-20.33 step=51179
+Ep 57: reward=-21.0 mean_last_100=-20.34 step=52144
+Ep 58: reward=-21.0 mean_last_100=-20.36 step=52997
+Ep 59: reward=-21.0 mean_last_100=-20.37 step=53821
+Ep 60: reward=-19.0 mean_last_100=-20.34 step=54819
+Ep 61: reward=-21.0 mean_last_100=-20.35 step=55673
+Ep 62: reward=-21.0 mean_last_100=-20.37 step=56497
+Ep 63: reward=-20.0 mean_last_100=-20.36 step=57340
+Ep 64: reward=-21.0 mean_last_100=-20.37 step=58164
+Ep 65: reward=-21.0 mean_last_100=-20.38 step=59016
+Ep 66: reward=-21.0 mean_last_100=-20.39 step=59874
+Ep 67: reward=-21.0 mean_last_100=-20.40 step=60698
+Ep 68: reward=-21.0 mean_last_100=-20.41 step=61547
+Ep 69: reward=-21.0 mean_last_100=-20.41 step=62371
+Ep 70: reward=-21.0 mean_last_100=-20.42 step=63195
+Ep 71: reward=-21.0 mean_last_100=-20.43 step=63959
+Ep 72: reward=-20.0 mean_last_100=-20.42 step=64985
+Ep 73: reward=-21.0 mean_last_100=-20.43 step=65749
+Ep 74: reward=-20.0 mean_last_100=-20.43 step=66592
+Ep 75: reward=-20.0 mean_last_100=-20.42 step=67462

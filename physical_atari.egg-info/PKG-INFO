@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: physical-atari
+Version: 0.0.0
+Summary: Research scripts for the physical Atari setup and Swift-Sarsa experiments.
+Requires-Python: >=3.9
+License-File: LICENSE
+Dynamic: license-file
+Dynamic: requires-python
+Dynamic: summary

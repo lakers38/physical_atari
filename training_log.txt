@@ -1,0 +1,222 @@
+/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/gymnasium/envs/registration.py:596: UserWarning: [33mWARN: plugin: shimmy.registration:register_gymnasium_envs raised Traceback (most recent call last):
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/gymnasium/envs/registration.py", line 594, in load_plugin_envs
+    fn()
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/shimmy/registration.py", line 263, in register_gymnasium_envs
+    _register_atari_envs()
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/shimmy/registration.py", line 168, in _register_atari_envs
+    import ale_py
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/ale_py/__init__.py", line 68, in <module>
+    register_v0_v4_envs()
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/ale_py/registration.py", line 178, in register_v0_v4_envs
+    _register_rom_configs(legacy_games, obs_types, versions)
+  File "/home/praneet/miniconda3/envs/physical_atari/lib/python3.11/site-packages/ale_py/registration.py", line 63, in _register_rom_configs
+    gymnasium.register(
+    ^^^^^^^^^^^^^^^^^^
+AttributeError: partially initialized module 'gymnasium' has no attribute 'register' (most likely due to a circular import)
+[0m
+  logger.warn(f"plugin: {plugin.value} raised {traceback.format_exc()}")
+A.L.E: Arcade Learning Environment (version 0.10.1+unknown)
+[Powered by Stella]
+Action meanings: ['NOOP', 'FIRE', 'UP', 'RIGHT', 'LEFT', 'DOWN', 'UPRIGHT', 'UPLEFT', 'DOWNRIGHT', 'DOWNLEFT', 'UPFIRE', 'RIGHTFIRE', 'LEFTFIRE', 'DOWNFIRE', 'UPRIGHTFIRE', 'UPLEFTFIRE', 'DOWNRIGHTFIRE', 'DOWNLEFTFIRE']
+Feature stats: total=403204, active_per_frame≈50401, alpha=0.1, alpha*active≈5.040e+03
+Memory capacity: 5000 (patterns=24)
+Base features: 403204, Total: 408204
+ep 0  reward -21.0  ema -21.00  step 191  avg_q -2.368  max_q -0.995  td_ema 0.464  actions [68, 68, 55]  learn  mem_feats=0
+ep 1  reward -21.0  ema -21.00  step 382  avg_q -2.679  max_q -0.967  td_ema 0.475  actions [134, 140, 108]  learn  mem_feats=0
+ep 2  reward -21.0  ema -21.00  step 573  avg_q -2.085  max_q -0.996  td_ema 0.459  actions [207, 198, 168]  learn  mem_feats=0
+ep 3  reward -21.0  ema -21.00  step 764  avg_q -3.022  max_q -1.003  td_ema 0.403  actions [278, 258, 228]  learn  mem_feats=0
+ep 4  reward -21.0  ema -21.00  step 955  avg_q -3.334  max_q -0.912  td_ema 0.489  actions [354, 331, 270]  learn  mem_feats=0
+step 1000  ep_rew -4.0  avg_q -7.753  max_q -7.663  mem_feats=0
+ep 5  reward -21.0  ema -21.00  step 1146  avg_q -3.899  max_q -0.983  td_ema 0.515  actions [439, 400, 307]  learn  mem_feats=0
+ep 6  reward -21.0  ema -21.00  step 1337  avg_q -2.926  max_q -0.893  td_ema 0.417  actions [486, 462, 389]  learn  mem_feats=0
+ep 7  reward -21.0  ema -21.00  step 1528  avg_q -2.218  max_q -0.955  td_ema 0.417  actions [559, 495, 474]  learn  mem_feats=0
+ep 8  reward -21.0  ema -21.00  step 1719  avg_q -2.339  max_q -0.959  td_ema 0.486  actions [630, 549, 540]  learn  mem_feats=0
+ep 9  reward -21.0  ema -21.00  step 1910  avg_q -3.259  max_q -0.942  td_ema 0.398  actions [687, 618, 605]  learn  mem_feats=0
+step 2000  ep_rew -9.0  avg_q -8.663  max_q -8.388  mem_feats=0
+ep 10  reward -21.0  ema -21.00  step 2101  avg_q -1.755  max_q -0.813  td_ema 0.477  actions [745, 693, 663]  learn  mem_feats=0
+ep 11  reward -21.0  ema -21.00  step 2292  avg_q -1.914  max_q -0.849  td_ema 0.446  actions [805, 776, 711]  learn  mem_feats=0
+ep 12  reward -21.0  ema -21.00  step 2483  avg_q -2.014  max_q -0.877  td_ema 0.479  actions [880, 834, 769]  learn  mem_feats=0
+ep 13  reward -21.0  ema -21.00  step 2674  avg_q -2.546  max_q -0.752  td_ema 0.430  actions [937, 895, 842]  learn  mem_feats=0
+ep 14  reward -21.0  ema -21.00  step 2865  avg_q -1.610  max_q -0.822  td_ema 0.432  actions [998, 940, 927]  learn  mem_feats=0
+step 3000  ep_rew -14.0  avg_q -9.615  max_q -9.394  mem_feats=0
+ep 15  reward -21.0  ema -21.00  step 3056  avg_q -2.657  max_q -0.820  td_ema 0.409  actions [1063, 1006, 987]  learn  mem_feats=0
+ep 16  reward -21.0  ema -21.00  step 3247  avg_q -2.754  max_q -0.783  td_ema 0.433  actions [1125, 1078, 1044]  learn  mem_feats=0
+ep 17  reward -21.0  ema -21.00  step 3438  avg_q -3.607  max_q -0.770  td_ema 0.413  actions [1202, 1147, 1089]  learn  mem_feats=0
+ep 18  reward -21.0  ema -21.00  step 3629  avg_q -1.849  max_q -0.793  td_ema 0.421  actions [1273, 1212, 1144]  learn  mem_feats=0
+ep 19  reward -21.0  ema -21.00  step 3820  avg_q -3.828  max_q -0.807  td_ema 0.473  actions [1322, 1299, 1199]  learn  mem_feats=0
+step 4000  ep_rew -19.0  avg_q -10.774  max_q -10.698  mem_feats=0
+ep 20  reward -21.0  ema -21.00  step 4011  avg_q -1.586  max_q -0.728  td_ema 0.467  actions [1393, 1361, 1257]  learn  mem_feats=0
+ep 21  reward -21.0  ema -21.00  step 4202  avg_q -2.434  max_q -0.795  td_ema 0.373  actions [1466, 1425, 1311]  learn  mem_feats=0
+ep 22  reward -21.0  ema -21.00  step 4393  avg_q -2.338  max_q -0.674  td_ema 0.397  actions [1535, 1491, 1367]  learn  mem_feats=0
+ep 23  reward -21.0  ema -21.00  step 4584  avg_q -2.823  max_q -0.759  td_ema 0.395  actions [1614, 1552, 1418]  learn  mem_feats=0
+ep 24  reward -21.0  ema -21.00  step 4775  avg_q -1.804  max_q -0.657  td_ema 0.402  actions [1672, 1628, 1475]  learn  mem_feats=0
+ep 25  reward -21.0  ema -21.00  step 4966  avg_q -2.034  max_q -0.645  td_ema 0.386  actions [1721, 1698, 1547]  learn  mem_feats=0
+step 5000  ep_rew -3.0  avg_q -4.705  max_q -4.565  mem_feats=0
+ep 26  reward -21.0  ema -21.00  step 5157  avg_q -1.329  max_q -0.721  td_ema 0.367  actions [1786, 1759, 1612]  learn  mem_feats=0
+ep 27  reward -21.0  ema -21.00  step 5348  avg_q -1.351  max_q -0.628  td_ema 0.405  actions [1845, 1820, 1683]  learn  mem_feats=0
+ep 28  reward -21.0  ema -21.00  step 5539  avg_q -1.287  max_q -0.671  td_ema 0.413  actions [1914, 1880, 1745]  learn  mem_feats=0
+ep 29  reward -21.0  ema -21.00  step 5730  avg_q -2.121  max_q -0.693  td_ema 0.407  actions [1992, 1946, 1792]  learn  mem_feats=0
+ep 30  reward -21.0  ema -21.00  step 5921  avg_q -3.171  max_q -0.700  td_ema 0.390  actions [2057, 2006, 1858]  learn  mem_feats=0
+step 6000  ep_rew -8.0  avg_q -9.019  max_q -8.952  mem_feats=0
+ep 31  reward -21.0  ema -21.00  step 6112  avg_q -1.208  max_q -0.668  td_ema 0.375  actions [2096, 2085, 1931]  learn  mem_feats=0
+ep 32  reward -21.0  ema -21.00  step 6303  avg_q -1.562  max_q -0.567  td_ema 0.368  actions [2169, 2147, 1987]  learn  mem_feats=0
+ep 33  reward -21.0  ema -21.00  step 6494  avg_q -1.951  max_q -0.640  td_ema 0.369  actions [2243, 2206, 2045]  learn  mem_feats=0
+ep 34  reward -21.0  ema -21.00  step 6685  avg_q -1.454  max_q -0.642  td_ema 0.344  actions [2319, 2261, 2105]  learn  mem_feats=0
+ep 35  reward -21.0  ema -21.00  step 6876  avg_q -2.383  max_q -0.525  td_ema 0.356  actions [2394, 2326, 2156]  learn  mem_feats=0
+step 7000  ep_rew -13.0  avg_q -9.979  max_q -9.868  mem_feats=0
+ep 36  reward -21.0  ema -21.00  step 7067  avg_q -1.835  max_q -0.618  td_ema 0.381  actions [2466, 2394, 2207]  learn  mem_feats=0
+ep 37  reward -21.0  ema -21.00  step 7258  avg_q -1.951  max_q -0.583  td_ema 0.418  actions [2521, 2467, 2270]  learn  mem_feats=0
+ep 38  reward -21.0  ema -21.00  step 7449  avg_q -1.239  max_q -0.512  td_ema 0.371  actions [2580, 2528, 2341]  learn  mem_feats=0
+ep 39  reward -21.0  ema -21.00  step 7640  avg_q -1.702  max_q -0.637  td_ema 0.389  actions [2655, 2581, 2404]  learn  mem_feats=0
+ep 40  reward -21.0  ema -21.00  step 7831  avg_q -1.715  max_q -0.621  td_ema 0.380  actions [2715, 2653, 2463]  learn  mem_feats=0
+step 8000  ep_rew -18.0  avg_q -10.689  max_q -10.531  mem_feats=0
+ep 41  reward -21.0  ema -21.00  step 8022  avg_q -1.796  max_q -0.532  td_ema 0.360  actions [2774, 2727, 2521]  learn  mem_feats=0
+ep 42  reward -21.0  ema -21.00  step 8213  avg_q -1.664  max_q -0.547  td_ema 0.341  actions [2838, 2775, 2600]  learn  mem_feats=0
+ep 43  reward -21.0  ema -21.00  step 8404  avg_q -1.815  max_q -0.558  td_ema 0.372  actions [2905, 2833, 2666]  learn  mem_feats=0
+ep 44  reward -21.0  ema -21.00  step 8595  avg_q -1.407  max_q -0.342  td_ema 0.310  actions [2973, 2886, 2736]  learn  mem_feats=0
+ep 45  reward -21.0  ema -21.00  step 8786  avg_q -2.127  max_q -0.546  td_ema 0.342  actions [3049, 2941, 2796]  learn  mem_feats=0
+ep 46  reward -21.0  ema -21.00  step 8977  avg_q -1.399  max_q -0.425  td_ema 0.339  actions [3098, 3008, 2871]  learn  mem_feats=0
+step 9000  ep_rew -1.0  avg_q -6.288  max_q -6.197  mem_feats=0
+ep 47  reward -21.0  ema -21.00  step 9168  avg_q -1.593  max_q -0.592  td_ema 0.348  actions [3168, 3067, 2933]  learn  mem_feats=0
+ep 48  reward -21.0  ema -21.00  step 9359  avg_q -1.221  max_q -0.371  td_ema 0.325  actions [3230, 3139, 2990]  learn  mem_feats=0
+ep 49  reward -21.0  ema -21.00  step 9550  avg_q -0.935  max_q -0.525  td_ema 0.301  actions [3296, 3195, 3059]  learn  mem_feats=0
+ep 50  reward -21.0  ema -21.00  step 9741  avg_q -0.972  max_q -0.586  td_ema 0.336  actions [3360, 3252, 3129]  learn  mem_feats=0
+ep 51  reward -21.0  ema -21.00  step 9932  avg_q -1.595  max_q -0.384  td_ema 0.300  actions [3419, 3312, 3201]  learn  mem_feats=0
+step 10000  ep_rew -6.0  avg_q -7.834  max_q -7.749  mem_feats=0
+ep 52  reward -21.0  ema -21.00  step 10123  avg_q -0.858  max_q -0.448  td_ema 0.257  actions [3472, 3373, 3278]  learn  mem_feats=0
+ep 53  reward -21.0  ema -21.00  step 10314  avg_q -0.899  max_q -0.495  td_ema 0.298  actions [3524, 3443, 3347]  learn  mem_feats=0
+ep 54  reward -21.0  ema -21.00  step 10505  avg_q -1.213  max_q -0.496  td_ema 0.290  actions [3594, 3498, 3413]  learn  mem_feats=0
+ep 55  reward -21.0  ema -21.00  step 10696  avg_q -1.071  max_q -0.529  td_ema 0.303  actions [3653, 3563, 3480]  learn  mem_feats=0
+ep 56  reward -21.0  ema -21.00  step 10887  avg_q -1.265  max_q -0.524  td_ema 0.313  actions [3721, 3624, 3542]  learn  mem_feats=0
+step 11000  ep_rew -12.0  avg_q -7.522  max_q -7.354  mem_feats=0
+ep 57  reward -21.0  ema -21.00  step 11078  avg_q -1.171  max_q -0.516  td_ema 0.271  actions [3780, 3686, 3612]  learn  mem_feats=0
+ep 58  reward -21.0  ema -21.00  step 11269  avg_q -0.904  max_q -0.468  td_ema 0.218  actions [3843, 3741, 3685]  learn  mem_feats=0
+ep 59  reward -21.0  ema -21.00  step 11460  avg_q -1.292  max_q -0.493  td_ema 0.271  actions [3904, 3804, 3752]  learn  mem_feats=0
+ep 60  reward -21.0  ema -21.00  step 11651  avg_q -0.940  max_q -0.403  td_ema 0.262  actions [3964, 3866, 3821]  learn  mem_feats=0
+ep 61  reward -21.0  ema -21.00  step 11842  avg_q -0.787  max_q -0.354  td_ema 0.238  actions [4032, 3935, 3875]  learn  mem_feats=0
+step 12000  ep_rew -17.0  avg_q -8.886  max_q -8.837  mem_feats=0
+ep 62  reward -21.0  ema -21.00  step 12033  avg_q -1.488  max_q -0.563  td_ema 0.227  actions [4102, 3988, 3943]  learn  mem_feats=0
+ep 63  reward -21.0  ema -21.00  step 12224  avg_q -0.789  max_q -0.670  td_ema 0.280  actions [4167, 4057, 4000]  learn  mem_feats=0
+ep 64  reward -21.0  ema -21.00  step 12415  avg_q -0.907  max_q -0.573  td_ema 0.232  actions [4221, 4129, 4065]  learn  mem_feats=0
+ep 65  reward -21.0  ema -21.00  step 12606  avg_q -0.756  max_q -0.276  td_ema 0.248  actions [4281, 4191, 4134]  learn  mem_feats=0
+ep 66  reward -21.0  ema -21.00  step 12797  avg_q -0.625  max_q -0.274  td_ema 0.245  actions [4345, 4255, 4197]  learn  mem_feats=0
+ep 67  reward -21.0  ema -21.00  step 12988  avg_q -1.259  max_q -0.410  td_ema 0.243  actions [4403, 4325, 4260]  learn  mem_feats=0
+step 13000  ep_rew 0.0  avg_q -7.520  max_q -6.789  mem_feats=0
+ep 68  reward -21.0  ema -21.00  step 13179  avg_q -1.481  max_q -0.458  td_ema 0.241  actions [4444, 4400, 4335]  learn  mem_feats=0
+ep 69  reward -21.0  ema -21.00  step 13370  avg_q -1.099  max_q -0.517  td_ema 0.242  actions [4474, 4481, 4415]  learn  mem_feats=0
+ep 70  reward -21.0  ema -21.00  step 13561  avg_q -0.796  max_q -0.194  td_ema 0.228  actions [4535, 4544, 4482]  learn  mem_feats=0
+ep 71  reward -21.0  ema -21.00  step 13752  avg_q -1.459  max_q -0.240  td_ema 0.191  actions [4610, 4590, 4552]  learn  mem_feats=0
+ep 72  reward -21.0  ema -21.00  step 13943  avg_q -1.462  max_q -0.258  td_ema 0.227  actions [4670, 4656, 4617]  learn  mem_feats=0
+step 14000  ep_rew -5.0  avg_q -8.906  max_q -8.698  mem_feats=0
+ep 73  reward -21.0  ema -21.00  step 14134  avg_q -0.682  max_q -0.521  td_ema 0.240  actions [4718, 4724, 4692]  learn  mem_feats=0
+ep 74  reward -21.0  ema -21.00  step 14325  avg_q -0.823  max_q -0.437  td_ema 0.208  actions [4782, 4792, 4751]  learn  mem_feats=0
+ep 75  reward -21.0  ema -21.00  step 14516  avg_q -0.750  max_q -0.554  td_ema 0.230  actions [4833, 4870, 4813]  learn  mem_feats=0
+ep 76  reward -21.0  ema -21.00  step 14707  avg_q -1.089  max_q -0.336  td_ema 0.172  actions [4901, 4944, 4862]  learn  mem_feats=0
+ep 77  reward -21.0  ema -21.00  step 14898  avg_q -0.602  max_q -0.432  td_ema 0.193  actions [4966, 5005, 4927]  learn  mem_feats=0
+step 15000  ep_rew -10.0  avg_q -6.190  max_q -5.952  mem_feats=0
+ep 78  reward -21.0  ema -21.00  step 15089  avg_q -0.886  max_q -0.376  td_ema 0.187  actions [5015, 5067, 5007]  learn  mem_feats=0
+ep 79  reward -21.0  ema -21.00  step 15280  avg_q -0.558  max_q -0.385  td_ema 0.200  actions [5078, 5138, 5064]  learn  mem_feats=0
+ep 80  reward -21.0  ema -21.00  step 15471  avg_q -0.488  max_q -0.307  td_ema 0.180  actions [5131, 5206, 5134]  learn  mem_feats=0
+ep 81  reward -21.0  ema -21.00  step 15662  avg_q -1.496  max_q -0.266  td_ema 0.177  actions [5208, 5263, 5191]  learn  mem_feats=0
+ep 82  reward -21.0  ema -21.00  step 15853  avg_q -0.916  max_q -0.230  td_ema 0.188  actions [5269, 5338, 5246]  learn  mem_feats=0
+step 16000  ep_rew -15.0  avg_q -6.454  max_q -6.346  mem_feats=0
+ep 83  reward -21.0  ema -21.00  step 16044  avg_q -0.595  max_q -0.281  td_ema 0.168  actions [5331, 5397, 5316]  learn  mem_feats=0
+ep 84  reward -21.0  ema -21.00  step 16235  avg_q -1.278  max_q -0.307  td_ema 0.193  actions [5395, 5458, 5382]  learn  mem_feats=0
+ep 85  reward -21.0  ema -21.00  step 16426  avg_q -0.572  max_q -0.202  td_ema 0.180  actions [5454, 5528, 5444]  learn  mem_feats=0
+ep 86  reward -21.0  ema -21.00  step 16617  avg_q -0.677  max_q -0.191  td_ema 0.168  actions [5518, 5587, 5512]  learn  mem_feats=0
+ep 87  reward -21.0  ema -21.00  step 16808  avg_q -0.213  max_q 0.035  td_ema 0.123  actions [5601, 5641, 5566]  learn  mem_feats=0
+ep 88  reward -21.0  ema -21.00  step 16999  avg_q -0.419  max_q -0.028  td_ema 0.172  actions [5659, 5702, 5638]  learn  mem_feats=0
+step 17000  ep_rew 0.0  avg_q -7.408  max_q -7.084  mem_feats=0
+ep 89  reward -21.0  ema -21.00  step 17190  avg_q -0.823  max_q -0.096  td_ema 0.176  actions [5737, 5763, 5690]  learn  mem_feats=0
+ep 90  reward -21.0  ema -21.00  step 17381  avg_q -0.341  max_q -0.290  td_ema 0.145  actions [5798, 5813, 5770]  learn  mem_feats=0
+ep 91  reward -21.0  ema -21.00  step 17572  avg_q -0.487  max_q -0.218  td_ema 0.155  actions [5867, 5881, 5824]  learn  mem_feats=0
+ep 92  reward -21.0  ema -21.00  step 17763  avg_q -0.490  max_q -0.244  td_ema 0.154  actions [5934, 5943, 5886]  learn  mem_feats=0
+ep 93  reward -21.0  ema -21.00  step 17954  avg_q -0.473  max_q -0.024  td_ema 0.142  actions [5991, 6007, 5956]  learn  mem_feats=0
+step 18000  ep_rew -4.0  avg_q -6.905  max_q -6.707  mem_feats=0
+ep 94  reward -21.0  ema -21.00  step 18145  avg_q -0.678  max_q -0.345  td_ema 0.147  actions [6076, 6072, 5997]  learn  mem_feats=0
+ep 95  reward -21.0  ema -21.00  step 18336  avg_q -0.517  max_q -0.298  td_ema 0.136  actions [6142, 6156, 6038]  learn  mem_feats=0
+ep 96  reward -21.0  ema -21.00  step 18527  avg_q -0.293  max_q 0.054  td_ema 0.121  actions [6208, 6226, 6093]  learn  mem_feats=0
+ep 97  reward -21.0  ema -21.00  step 18718  avg_q -0.551  max_q -0.195  td_ema 0.121  actions [6268, 6293, 6157]  learn  mem_feats=0
+ep 98  reward -21.0  ema -21.00  step 18909  avg_q -0.537  max_q -0.216  td_ema 0.157  actions [6329, 6358, 6222]  learn  mem_feats=0
+step 19000  ep_rew -9.0  avg_q -5.669  max_q -5.434  mem_feats=0
+ep 99  reward -21.0  ema -21.00  step 19100  avg_q -0.179  max_q 0.162  td_ema 0.083  actions [6395, 6408, 6297]  learn  mem_feats=0
+ep 100  reward -21.0  ema -21.00  step 19291  avg_q -0.716  max_q -0.505  td_ema 0.131  actions [6460, 6479, 6352]  learn  mem_feats=0
+ep 101  reward -21.0  ema -21.00  step 19482  avg_q -0.439  max_q -0.051  td_ema 0.119  actions [6519, 6558, 6405]  learn  mem_feats=0
+ep 102  reward -21.0  ema -21.00  step 19673  avg_q -0.421  max_q -0.249  td_ema 0.116  actions [6586, 6624, 6463]  learn  mem_feats=0
+ep 103  reward -21.0  ema -21.00  step 19864  avg_q -0.392  max_q -0.067  td_ema 0.099  actions [6651, 6689, 6524]  learn  mem_feats=0
+step 20000  ep_rew -14.0  avg_q -6.162  max_q -5.817  mem_feats=0
+ep 104  reward -21.0  ema -21.00  step 20055  avg_q -0.540  max_q 0.039  td_ema 0.099  actions [6718, 6744, 6593]  learn  mem_feats=0
+ep 105  reward -21.0  ema -21.00  step 20246  avg_q -0.456  max_q -0.357  td_ema 0.119  actions [6792, 6799, 6655]  learn  mem_feats=0
+ep 106  reward -21.0  ema -21.00  step 20437  avg_q -0.425  max_q 0.089  td_ema 0.101  actions [6848, 6860, 6729]  learn  mem_feats=0
+ep 107  reward -21.0  ema -21.00  step 20628  avg_q -0.587  max_q -0.061  td_ema 0.108  actions [6907, 6920, 6801]  learn  mem_feats=0
+ep 108  reward -21.0  ema -21.00  step 20819  avg_q -0.350  max_q -0.023  td_ema 0.111  actions [6971, 6975, 6873]  learn  mem_feats=0
+step 21000  ep_rew -19.0  avg_q -5.002  max_q -4.711  mem_feats=0
+ep 109  reward -21.0  ema -21.00  step 21010  avg_q -0.498  max_q -0.369  td_ema 0.122  actions [7023, 7045, 6942]  learn  mem_feats=0
+ep 110  reward -21.0  ema -21.00  step 21201  avg_q -0.307  max_q 0.071  td_ema 0.076  actions [7080, 7106, 7015]  learn  mem_feats=0
+ep 111  reward -21.0  ema -21.00  step 21392  avg_q -0.560  max_q 0.011  td_ema 0.100  actions [7146, 7172, 7074]  learn  mem_feats=0
+ep 112  reward -21.0  ema -21.00  step 21583  avg_q -0.507  max_q -0.194  td_ema 0.090  actions [7220, 7232, 7131]  learn  mem_feats=0
+ep 113  reward -21.0  ema -21.00  step 21774  avg_q -0.323  max_q -0.115  td_ema 0.099  actions [7285, 7299, 7190]  learn  mem_feats=0
+ep 114  reward -21.0  ema -21.00  step 21965  avg_q -0.474  max_q -0.152  td_ema 0.089  actions [7352, 7361, 7252]  learn  mem_feats=0
+step 22000  ep_rew -3.0  avg_q -7.426  max_q -7.276  mem_feats=0
+ep 115  reward -21.0  ema -21.00  step 22156  avg_q -0.442  max_q -0.328  td_ema 0.080  actions [7418, 7414, 7324]  learn  mem_feats=0
+ep 116  reward -21.0  ema -21.00  step 22347  avg_q -0.398  max_q -0.110  td_ema 0.060  actions [7479, 7487, 7381]  learn  mem_feats=0
+ep 117  reward -21.0  ema -21.00  step 22538  avg_q -0.624  max_q -0.413  td_ema 0.092  actions [7534, 7556, 7448]  learn  mem_feats=0
+ep 118  reward -21.0  ema -21.00  step 22729  avg_q -0.559  max_q -0.012  td_ema 0.084  actions [7597, 7620, 7512]  learn  mem_feats=0
+ep 119  reward -21.0  ema -21.00  step 22920  avg_q -0.408  max_q 0.015  td_ema 0.075  actions [7667, 7680, 7573]  learn  mem_feats=0
+step 23000  ep_rew -8.0  avg_q -6.510  max_q -6.345  mem_feats=0
+ep 120  reward -21.0  ema -21.00  step 23111  avg_q -0.454  max_q -0.099  td_ema 0.078  actions [7717, 7751, 7643]  learn  mem_feats=0
+ep 121  reward -21.0  ema -21.00  step 23302  avg_q -0.398  max_q -0.011  td_ema 0.061  actions [7790, 7809, 7703]  learn  mem_feats=0
+ep 122  reward -21.0  ema -21.00  step 23493  avg_q -0.506  max_q -0.382  td_ema 0.085  actions [7861, 7880, 7752]  learn  mem_feats=0
+ep 123  reward -21.0  ema -21.00  step 23684  avg_q -0.551  max_q -0.365  td_ema 0.078  actions [7925, 7941, 7818]  learn  mem_feats=0
+ep 124  reward -21.0  ema -21.00  step 23875  avg_q -0.433  max_q -0.211  td_ema 0.074  actions [8003, 7996, 7876]  learn  mem_feats=0
+step 24000  ep_rew -13.0  avg_q -6.674  max_q -6.472  mem_feats=0
+ep 125  reward -21.0  ema -21.00  step 24066  avg_q -0.343  max_q -0.168  td_ema 0.060  actions [8067, 8070, 7929]  learn  mem_feats=0
+ep 126  reward -21.0  ema -21.00  step 24257  avg_q -0.495  max_q -0.146  td_ema 0.070  actions [8122, 8150, 7985]  learn  mem_feats=0
+ep 127  reward -21.0  ema -21.00  step 24448  avg_q -0.241  max_q -0.091  td_ema 0.070  actions [8181, 8233, 8034]  learn  mem_feats=0
+ep 128  reward -21.0  ema -21.00  step 24639  avg_q -0.432  max_q -0.317  td_ema 0.070  actions [8235, 8309, 8095]  learn  mem_feats=0
+ep 129  reward -21.0  ema -21.00  step 24830  avg_q -0.276  max_q -0.084  td_ema 0.047  actions [8309, 8366, 8155]  learn  mem_feats=0
+step 25000  ep_rew -18.0  avg_q -5.347  max_q -5.006  mem_feats=0
+ep 130  reward -21.0  ema -21.00  step 25021  avg_q -0.331  max_q 0.146  td_ema 0.045  actions [8370, 8429, 8222]  learn  mem_feats=0
+ep 131  reward -21.0  ema -21.00  step 25212  avg_q -0.399  max_q -0.118  td_ema 0.033  actions [8435, 8482, 8295]  learn  mem_feats=0
+ep 132  reward -21.0  ema -21.00  step 25403  avg_q -0.397  max_q -0.135  td_ema 0.050  actions [8511, 8538, 8354]  learn  mem_feats=0
+ep 133  reward -21.0  ema -21.00  step 25594  avg_q -0.380  max_q -0.187  td_ema 0.051  actions [8580, 8593, 8421]  learn  mem_feats=0
+ep 134  reward -21.0  ema -21.00  step 25785  avg_q -0.197  max_q 0.222  td_ema 0.045  actions [8651, 8656, 8478]  learn  mem_feats=0
+ep 135  reward -21.0  ema -21.00  step 25976  avg_q -0.333  max_q -0.031  td_ema 0.045  actions [8710, 8720, 8546]  learn  mem_feats=0
+step 26000  ep_rew -1.0  avg_q -8.931  max_q -8.430  mem_feats=0
+ep 136  reward -21.0  ema -21.00  step 26167  avg_q -0.284  max_q -0.077  td_ema 0.057  actions [8774, 8798, 8595]  learn  mem_feats=0
+ep 137  reward -21.0  ema -21.00  step 26358  avg_q -0.309  max_q -0.091  td_ema 0.042  actions [8829, 8872, 8657]  learn  mem_feats=0
+ep 138  reward -21.0  ema -21.00  step 26549  avg_q -0.201  max_q 0.425  td_ema 0.045  actions [8894, 8939, 8716]  learn  mem_feats=0
+ep 139  reward -21.0  ema -21.00  step 26740  avg_q -0.263  max_q 0.016  td_ema 0.044  actions [8961, 8995, 8784]  learn  mem_feats=0
+ep 140  reward -21.0  ema -21.00  step 26931  avg_q -0.351  max_q -0.164  td_ema 0.047  actions [9025, 9051, 8855]  learn  mem_feats=0
+step 27000  ep_rew -7.0  avg_q -6.770  max_q -6.603  mem_feats=0
+ep 141  reward -21.0  ema -21.00  step 27122  avg_q -0.259  max_q -0.176  td_ema 0.055  actions [9098, 9105, 8919]  learn  mem_feats=0
+ep 142  reward -21.0  ema -21.00  step 27313  avg_q -0.202  max_q 0.024  td_ema 0.033  actions [9166, 9174, 8973]  learn  mem_feats=0
+ep 143  reward -21.0  ema -21.00  step 27504  avg_q -0.304  max_q 0.038  td_ema 0.040  actions [9234, 9240, 9030]  learn  mem_feats=0
+ep 144  reward -21.0  ema -21.00  step 27695  avg_q -0.250  max_q -0.049  td_ema 0.041  actions [9293, 9310, 9092]  learn  mem_feats=0
+ep 145  reward -21.0  ema -21.00  step 27886  avg_q -0.373  max_q -0.226  td_ema 0.038  actions [9361, 9382, 9143]  learn  mem_feats=0
+step 28000  ep_rew -12.0  avg_q -6.625  max_q -6.335  mem_feats=0
+ep 146  reward -21.0  ema -21.00  step 28077  avg_q -0.328  max_q 0.007  td_ema 0.048  actions [9437, 9437, 9203]  learn  mem_feats=0
+ep 147  reward -21.0  ema -21.00  step 28268  avg_q -0.388  max_q -0.234  td_ema 0.054  actions [9510, 9485, 9273]  learn  mem_feats=0
+ep 148  reward -21.0  ema -21.00  step 28459  avg_q -0.469  max_q -0.082  td_ema 0.046  actions [9573, 9554, 9332]  learn  mem_feats=0
+ep 149  reward -21.0  ema -21.00  step 28650  avg_q -0.147  max_q 0.063  td_ema 0.043  actions [9643, 9620, 9387]  learn  mem_feats=0
+ep 150  reward -21.0  ema -21.00  step 28841  avg_q -0.150  max_q 0.411  td_ema 0.034  actions [9713, 9690, 9438]  learn  mem_feats=0
+step 29000  ep_rew -17.0  avg_q -5.440  max_q -5.007  mem_feats=5
+ep 151  reward -21.0  ema -21.00  step 29032  avg_q -0.377  max_q -0.203  td_ema 0.035  actions [9765, 9761, 9506]  learn  mem_feats=5
+ep 152  reward -21.0  ema -21.00  step 29223  avg_q -0.329  max_q 0.082  td_ema 0.047  actions [9842, 9819, 9562]  learn  mem_feats=5
+ep 153  reward -21.0  ema -21.00  step 29414  avg_q -0.424  max_q -0.190  td_ema 0.047  actions [9913, 9882, 9619]  learn  mem_feats=5
+ep 154  reward -21.0  ema -21.00  step 29605  avg_q -0.346  max_q 0.053  td_ema 0.034  actions [9992, 9956, 9657]  learn  mem_feats=5
+ep 155  reward -21.0  ema -21.00  step 29796  avg_q -0.432  max_q -0.056  td_ema 0.034  actions [10061, 10016, 9719]  learn  mem_feats=5
+ep 156  reward -21.0  ema -21.00  step 29987  avg_q -0.408  max_q -0.129  td_ema 0.038  actions [10133, 10073, 9781]  learn  mem_feats=10
+step 30000  ep_rew 0.0  avg_q -9.581  max_q -9.319  mem_feats=10
+ep 157  reward -21.0  ema -21.00  step 30178  avg_q -0.557  max_q -0.248  td_ema 0.031  actions [10196, 10141, 9841]  learn  mem_feats=10
+ep 158  reward -21.0  ema -21.00  step 30369  avg_q -0.470  max_q -0.345  td_ema 0.046  actions [10255, 10205, 9909]  learn  mem_feats=10
+ep 159  reward -21.0  ema -21.00  step 30560  avg_q -0.464  max_q -0.298  td_ema 0.029  actions [10316, 10265, 9979]  learn  mem_feats=10
+ep 160  reward -21.0  ema -21.00  step 30751  avg_q -0.357  max_q 0.017  td_ema 0.034  actions [10382, 10324, 10045]  learn  mem_feats=15
+ep 161  reward -21.0  ema -21.00  step 30942  avg_q -0.606  max_q -0.035  td_ema 0.024  actions [10452, 10389, 10101]  learn  mem_feats=20
+step 31000  ep_rew -5.0  avg_q -8.815  max_q -8.288  mem_feats=20
+ep 162  reward -21.0  ema -21.00  step 31133  avg_q -0.485  max_q -0.400  td_ema 0.034  actions [10531, 10456, 10146]  learn  mem_feats=20
+ep 163  reward -21.0  ema -21.00  step 31324  avg_q -0.448  max_q 0.164  td_ema 0.028  actions [10595, 10516, 10213]  learn  mem_feats=20
+ep 164  reward -21.0  ema -21.00  step 31515  avg_q -0.544  max_q -0.310  td_ema 0.034  actions [10662, 10587, 10266]  learn  mem_feats=20
+ep 165  reward -21.0  ema -21.00  step 31706  avg_q -0.560  max_q -0.116  td_ema 0.029  actions [10724, 10648, 10334]  learn  mem_feats=25
+ep 166  reward -21.0  ema -21.00  step 31897  avg_q -0.687  max_q -0.496  td_ema 0.037  actions [10775, 10719, 10403]  learn  mem_feats=30
+step 32000  ep_rew -10.0  avg_q -5.326  max_q -4.663  mem_feats=30
