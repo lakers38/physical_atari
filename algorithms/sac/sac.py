@@ -264,7 +264,8 @@ class SACAgent:
         target_entropy: Optional[float] = None,
     ):
         self.num_actions = num_actions
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device)
+        print("THE DEVICE IS : ", self.device)
         self.gamma = gamma
         self.tau = tau
         self.fail_on_nonfinite = fail_on_nonfinite
@@ -283,7 +284,9 @@ class SACAgent:
 
             # Use log_alpha for numerical stability (ensures alpha > 0)
             # Initialize to log(0.2) to start with reasonable alpha
-            self.log_alpha = torch.tensor([np.log(0.2)], requires_grad=True, device=self.device)
+            self.log_alpha = torch.tensor(
+                [np.log(0.2)], requires_grad=True, device=self.device, dtype=torch.float32
+            )
             self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=learning_rate)
             # Keep alpha in a sane range to avoid exploding value targets
             self.min_alpha = 1e-4
@@ -296,45 +299,6 @@ class SACAgent:
             self.target_entropy = None
             self.log_alpha = None
             self.alpha_optimizer = None
-
-class ReplayBuffer:
-    """Simple FIFO replay buffer storing preprocessed (grayscale, stacked) frames."""
-
-    def __init__(self, capacity: int, obs_shape: tuple[int, int, int]):
-        self.capacity = capacity
-        self.obs_shape = obs_shape
-        self.obs = np.zeros((capacity, *obs_shape), dtype=np.uint8)
-        self.next_obs = np.zeros((capacity, *obs_shape), dtype=np.uint8)
-        self.actions = np.zeros((capacity,), dtype=np.int64)
-        self.rewards = np.zeros((capacity,), dtype=np.float32)
-        self.dones = np.zeros((capacity,), dtype=np.bool_)
-        self.ptr = 0
-        self.full = False
-
-    @property
-    def size(self) -> int:
-        return self.capacity if self.full else self.ptr
-
-    def add(self, obs, action, reward, next_obs, done):
-        self.obs[self.ptr] = obs
-        self.next_obs[self.ptr] = next_obs
-        self.actions[self.ptr] = action
-        self.rewards[self.ptr] = reward
-        self.dones[self.ptr] = done
-
-        self.ptr = (self.ptr + 1) % self.capacity
-        if self.ptr == 0:
-            self.full = True
-
-    def sample(self, batch_size: int):
-        idx = np.random.randint(0, self.size, size=batch_size)
-        return (
-            self.obs[idx],
-            self.actions[idx],
-            self.rewards[idx],
-            self.next_obs[idx],
-            self.dones[idx].astype(np.float32),
-        )
 
         # Shared CNN feature extractor
         self.cnn = CNNFeatureExtractor(
@@ -562,8 +526,9 @@ class ReplayBuffer:
 
             # Alpha loss: minimize α * (entropy - target_entropy)
             # This increases alpha when entropy is too low, decreases when too high
+            target_entropy_t = torch.as_tensor(self.target_entropy, device=self.device, dtype=torch.float32)
             alpha_loss = self.log_alpha.clamp(self.log_alpha_min, self.log_alpha_max).exp() * (
-                current_entropy.detach() - self.target_entropy
+                current_entropy.detach() - target_entropy_t
             )
 
             # Update alpha
@@ -641,3 +606,43 @@ class ReplayBuffer:
             self.log_alpha.requires_grad = True
             if "alpha_optimizer" in ckpt:
                 self.alpha_optimizer.load_state_dict(ckpt["alpha_optimizer"])
+
+
+class ReplayBuffer:
+    """Simple FIFO replay buffer storing preprocessed (grayscale, stacked) frames."""
+
+    def __init__(self, capacity: int, obs_shape: tuple[int, int, int]):
+        self.capacity = capacity
+        self.obs_shape = obs_shape
+        self.obs = np.zeros((capacity, *obs_shape), dtype=np.uint8)
+        self.next_obs = np.zeros((capacity, *obs_shape), dtype=np.uint8)
+        self.actions = np.zeros((capacity,), dtype=np.int64)
+        self.rewards = np.zeros((capacity,), dtype=np.float32)
+        self.dones = np.zeros((capacity,), dtype=np.bool_)
+        self.ptr = 0
+        self.full = False
+
+    @property
+    def size(self) -> int:
+        return self.capacity if self.full else self.ptr
+
+    def add(self, obs, action, reward, next_obs, done):
+        self.obs[self.ptr] = obs
+        self.next_obs[self.ptr] = next_obs
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.dones[self.ptr] = done
+
+        self.ptr = (self.ptr + 1) % self.capacity
+        if self.ptr == 0:
+            self.full = True
+
+    def sample(self, batch_size: int):
+        idx = np.random.randint(0, self.size, size=batch_size)
+        return (
+            self.obs[idx],
+            self.actions[idx],
+            self.rewards[idx],
+            self.next_obs[idx],
+            self.dones[idx].astype(np.float32),
+        )

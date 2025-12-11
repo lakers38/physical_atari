@@ -720,7 +720,7 @@ def main():
     parser.add_argument("--no-auto-entropy-tuning", action="store_true", help="Disable automatic entropy tuning (use fixed entropy_coef instead)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
     parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer size (default: 100k)")
-    parser.add_argument("--batch-size", type=int, default=256, help="Batch size for updates (default: 256)")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for updates (default: 256)")
     parser.add_argument("--learning-starts", type=int, default=1_000, help="Steps to collect before starting updates (default: 1,000)")
     parser.add_argument("--train-freq", type=int, default=1, help="Environment steps between training phases (default: 1)")
     parser.add_argument("--gradient-steps", type=int, default=1, help="Gradient steps per training phase (default: 1)")
