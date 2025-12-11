@@ -274,23 +274,67 @@ class SACAgent:
 
         # Automatic entropy tuning
         if self.auto_entropy_tuning:
-            # Target entropy: -log(1/|A|) * 0.98 (slightly below uniform distribution)
-            # For uniform distribution over |A| actions, entropy = log(|A|)
-            # We target 98% of maximum entropy to maintain some exploration
+            # Target entropy: -log(1/|A|) * 0.5 (50% of maximum entropy)
+            # Lower target for online learning stability
             if target_entropy is None:
-                self.target_entropy = -np.log(1.0 / num_actions) * 0.98
+                self.target_entropy = -np.log(1.0 / num_actions) * 0.5
             else:
                 self.target_entropy = target_entropy
 
             # Use log_alpha for numerical stability (ensures alpha > 0)
-            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+            # Initialize to log(0.2) to start with reasonable alpha
+            self.log_alpha = torch.tensor([np.log(0.2)], requires_grad=True, device=self.device)
             self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=learning_rate)
+            # Keep alpha in a sane range to avoid exploding value targets
+            self.min_alpha = 1e-4
+            self.max_alpha = 10.0
+            self.log_alpha_min = np.log(self.min_alpha)
+            self.log_alpha_max = np.log(self.max_alpha)
         else:
             # Fixed entropy coefficient
             self.entropy_coef = entropy_coef
             self.target_entropy = None
             self.log_alpha = None
             self.alpha_optimizer = None
+
+class ReplayBuffer:
+    """Simple FIFO replay buffer storing preprocessed (grayscale, stacked) frames."""
+
+    def __init__(self, capacity: int, obs_shape: tuple[int, int, int]):
+        self.capacity = capacity
+        self.obs_shape = obs_shape
+        self.obs = np.zeros((capacity, *obs_shape), dtype=np.uint8)
+        self.next_obs = np.zeros((capacity, *obs_shape), dtype=np.uint8)
+        self.actions = np.zeros((capacity,), dtype=np.int64)
+        self.rewards = np.zeros((capacity,), dtype=np.float32)
+        self.dones = np.zeros((capacity,), dtype=np.bool_)
+        self.ptr = 0
+        self.full = False
+
+    @property
+    def size(self) -> int:
+        return self.capacity if self.full else self.ptr
+
+    def add(self, obs, action, reward, next_obs, done):
+        self.obs[self.ptr] = obs
+        self.next_obs[self.ptr] = next_obs
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.dones[self.ptr] = done
+
+        self.ptr = (self.ptr + 1) % self.capacity
+        if self.ptr == 0:
+            self.full = True
+
+    def sample(self, batch_size: int):
+        idx = np.random.randint(0, self.size, size=batch_size)
+        return (
+            self.obs[idx],
+            self.actions[idx],
+            self.rewards[idx],
+            self.next_obs[idx],
+            self.dones[idx].astype(np.float32),
+        )
 
         # Shared CNN feature extractor
         self.cnn = CNNFeatureExtractor(
@@ -362,7 +406,7 @@ class SACAgent:
     def alpha(self):
         """Get current entropy coefficient (alpha)."""
         if self.auto_entropy_tuning:
-            return self.log_alpha.exp().item()
+            return float(self.log_alpha.clamp(self.log_alpha_min, self.log_alpha_max).exp().item())
         else:
             return self.entropy_coef
 
@@ -375,9 +419,8 @@ class SACAgent:
         _ = obs_batch
 
     def _extract_features(self, obs_batch: np.ndarray) -> Tuple[torch.Tensor, np.ndarray]:
-        assert obs_batch.shape == (1, self.input_size, self.input_size, self.n_stack), (
-            f"obs_batch.shape is expected to be (1, {self.input_size}, {self.input_size}, {self.n_stack}), "
-            f"but got {obs_batch.shape}"
+        assert obs_batch.ndim == 4 and obs_batch.shape[-1] == self.n_stack, (
+            f"obs_batch expected shape (*, {self.input_size}, {self.input_size}, {self.n_stack}), got {obs_batch.shape}"
         )
         obs_batch = np.transpose(obs_batch, (0, 3, 1, 2))
         obs_t = torch.as_tensor(obs_batch, device=self.device, dtype=torch.float32) / 255.0
@@ -410,9 +453,6 @@ class SACAgent:
         rewards: np.ndarray,
         next_obs_batch: np.ndarray,
         dones: np.ndarray,
-        log_probs: torch.Tensor,
-        entropy: torch.Tensor,
-        current_feats: torch.Tensor,
     ):
         """
         SAC update step.
@@ -422,6 +462,9 @@ class SACAgent:
         2. Policy network to maximize Q - α·log(π)
         3. Target networks via Polyak averaging
         """
+        # Extract current features
+        current_feats, _ = self._extract_features(obs_batch)
+
         # Convert inputs to tensors
         actions_t = torch.as_tensor(actions, device=self.device, dtype=torch.long).unsqueeze(1)
         rewards_t = torch.as_tensor(rewards, device=self.device, dtype=torch.float32)
@@ -429,7 +472,7 @@ class SACAgent:
 
         # Get current alpha (entropy coefficient)
         if self.auto_entropy_tuning:
-            alpha = self.log_alpha.exp()
+            alpha = self.log_alpha.clamp(self.log_alpha_min, self.log_alpha_max).exp().detach()
         else:
             alpha = self.entropy_coef
 
@@ -519,12 +562,16 @@ class SACAgent:
 
             # Alpha loss: minimize α * (entropy - target_entropy)
             # This increases alpha when entropy is too low, decreases when too high
-            alpha_loss = self.log_alpha.exp() * (current_entropy - self.target_entropy)
+            alpha_loss = self.log_alpha.clamp(self.log_alpha_min, self.log_alpha_max).exp() * (
+                current_entropy.detach() - self.target_entropy
+            )
 
             # Update alpha
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
             self.alpha_optimizer.step()
+            # Explicitly clamp log_alpha to keep alpha bounded
+            self.log_alpha.data.clamp_(self.log_alpha_min, self.log_alpha_max)
         else:
             alpha_loss = torch.tensor(0.0)
 
@@ -552,6 +599,7 @@ class SACAgent:
             "value_next": float(next_v.mean().item()),
             "value_target": float(q_target.mean().item()),
             "policy_entropy": float(policy_entropy.item()),
+            "log_prob_mean": float(log_probs_all.mean().item()),
             "alpha": self.alpha,  # Current entropy coefficient
             "alpha_loss": float(alpha_loss.detach().cpu().item()) if self.auto_entropy_tuning else 0.0,
             "target_entropy": self.target_entropy if self.auto_entropy_tuning else None,

@@ -349,7 +349,7 @@ def train_loop(
 
     for step in range(max_env_steps):
         # Select action
-        actions, log_probs, entropy, feats = agent.select_actions(obs)
+        actions, _, _, _ = agent.select_actions(obs)
 
         # Environment step
         next_obs, reward, terminated, truncated, info = env.step(actions)
@@ -362,24 +362,23 @@ def train_loop(
         metrics = agent.update(
             obs, actions, reward_clipped,
             next_obs, done,
-            log_probs, entropy, feats
         )
 
         # Track metrics for logging window
-        recent_advantages.append(metrics["advantage_mean"])
-        recent_entropies.append(float(entropy.mean().item()))
+        recent_advantages.append(metrics["advantage"])
+        recent_entropies.append(metrics["policy_entropy"])
         recent_actor_losses.append(metrics["actor_loss"])
-        recent_log_probs.append(float(log_probs.mean().item()))
+        recent_log_probs.append(metrics["log_prob_mean"])
         recent_value_losses.append(metrics["value_loss"])
         recent_total_losses.append(metrics["total_loss"])
-        recent_value_preds.append(metrics["value_pred_mean"])
-        recent_value_next.append(metrics["value_next_mean"])
+        recent_value_preds.append(metrics["value_pred"])
+        recent_value_next.append(metrics["value_next"])
 
         # Track episode stats
         current_episode_reward += reward
         current_episode_length += 1
         for i in range(num_envs):
-            episode_values[i].append(metrics["value_pred_mean"])
+            episode_values[i].append(metrics["value_pred"])
             episode_rewards_stream[i].append(reward[i])
 
         # Handle episode end
