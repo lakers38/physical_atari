@@ -37,7 +37,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wra
 from wrapper_v0_2 import LatencyModel
 
 sys.path.append(os.path.dirname(__file__))
-from agent_actor_critic import SACAgent
+from sac import SACAgent
 
 # Register ALE environments
 gym.register_envs(ale_py)

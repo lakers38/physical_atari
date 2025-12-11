@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Train a simple Soft Actor-Critic style agent in Gymnasium with optional hardware latency simulation.
+Train a simple Advantage Actor-Critic (A2C) style agent in Gymnasium with optional hardware latency simulation.
 
 This script trains the agent on Atari games with two modes:
 - sim: Pure simulation (no latency) - fast baseline training
