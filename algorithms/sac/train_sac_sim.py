@@ -477,7 +477,6 @@ def train_agent(
     learning_rate,
     entropy_coef,
     gamma,
-    value_coef,
     seed,
     load_model_path,
     record_videos,
@@ -503,7 +502,6 @@ def train_agent(
         learning_rate: Learning rate
         entropy_coef: Entropy bonus coefficient
         gamma: Discount factor
-        value_coef: Weight on critic loss in total loss
         seed: Random seed
         load_model_path: Path to pre-trained model to continue training
         record_videos: If True, record gameplay videos
@@ -530,7 +528,6 @@ def train_agent(
             "simulate_latency": simulate_latency,
             "learning_rate": learning_rate,
             "gamma": gamma,
-            "value_coef": value_coef,
             "ent_coef": entropy_coef,
             "device": device,
             "algorithm": "SoftActorCritic",
@@ -593,7 +590,6 @@ def train_agent(
         gamma=gamma,
         learning_rate=learning_rate,
         entropy_coef=entropy_coef,
-        value_coef=value_coef,
     )
 
     if load_model_path and os.path.exists(load_model_path):
@@ -618,7 +614,6 @@ def train_agent(
     print(f"Learning rate (actor/CNN): {learning_rate}")
     print(f"Entropy coef: {entropy_coef}")
     print(f"Gamma: {gamma}")
-    print(f"Value loss coef: {value_coef}")
     if use_wandb and wandb_run:
         print(f"WandB: {wandb_run.url}")
     print(f"{'=' * 60}\n")
@@ -675,7 +670,6 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate for actor/CNN (default: 1e-4)")
     parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
-    parser.add_argument("--value-coef", type=float, default=0.5, help="Weight for critic loss in total loss (default: 0.5)")
     parser.add_argument("--n-stack", type=int, default=4, help="Number of frames to stack (default: 4)")
     parser.add_argument("--input-size", type=int, default=128, help="Input image size (default: 128)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
@@ -726,7 +720,6 @@ def main():
         f.write(f"Learning rate: {args.learning_rate}\n")
         f.write(f"Entropy coef: {args.entropy_coef}\n")
         f.write(f"Gamma: {args.gamma}\n")
-        f.write(f"Value loss coef: {args.value_coef}\n")
         f.write(f"N stack: {args.n_stack}\n")
         f.write(f"Input size: {args.input_size}\n")
         f.write(f"Seed: {args.seed}\n")
@@ -749,7 +742,6 @@ def main():
         learning_rate=args.learning_rate,
         entropy_coef=args.entropy_coef,
         gamma=args.gamma,
-        value_coef=args.value_coef,
         seed=args.seed,
         load_model_path=args.load_model,
         record_videos=not args.no_videos,

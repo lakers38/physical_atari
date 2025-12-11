@@ -258,7 +258,6 @@ class SACAgent:
         gamma: float = 0.99,
         learning_rate: float = 1e-4,
         entropy_coef: float = 0.01,
-        value_coef: float = 1.0,  # Not used in SAC, kept for compatibility
         tau: float = 0.005,  # Polyak averaging coefficient for target networks
         fail_on_nonfinite: bool = True,
     ):
