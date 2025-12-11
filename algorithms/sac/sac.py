@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Tuple
+from typing import Tuple, Optional
 import os
 
 
@@ -260,15 +260,37 @@ class SACAgent:
         entropy_coef: float = 0.01,
         tau: float = 0.005,  # Polyak averaging coefficient for target networks
         fail_on_nonfinite: bool = True,
+        auto_entropy_tuning: bool = True,
+        target_entropy: Optional[float] = None,
     ):
         self.num_actions = num_actions
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.gamma = gamma
-        self.entropy_coef = entropy_coef  # Alpha in SAC literature
         self.tau = tau
         self.fail_on_nonfinite = fail_on_nonfinite
         self.n_stack = n_stack
         self.input_size = input_size
+        self.auto_entropy_tuning = auto_entropy_tuning
+
+        # Automatic entropy tuning
+        if self.auto_entropy_tuning:
+            # Target entropy: -log(1/|A|) * 0.98 (slightly below uniform distribution)
+            # For uniform distribution over |A| actions, entropy = log(|A|)
+            # We target 98% of maximum entropy to maintain some exploration
+            if target_entropy is None:
+                self.target_entropy = -np.log(1.0 / num_actions) * 0.98
+            else:
+                self.target_entropy = target_entropy
+
+            # Use log_alpha for numerical stability (ensures alpha > 0)
+            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+            self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=learning_rate)
+        else:
+            # Fixed entropy coefficient
+            self.entropy_coef = entropy_coef
+            self.target_entropy = None
+            self.log_alpha = None
+            self.alpha_optimizer = None
 
         # Shared CNN feature extractor
         self.cnn = CNNFeatureExtractor(
@@ -336,6 +358,14 @@ class SACAgent:
                 target_param.data.mul_(1 - self.tau)
                 target_param.data.add_(self.tau * param.data)
 
+    @property
+    def alpha(self):
+        """Get current entropy coefficient (alpha)."""
+        if self.auto_entropy_tuning:
+            return self.log_alpha.exp().item()
+        else:
+            return self.entropy_coef
+
     def start_episodes(self, obs_batch: np.ndarray):
         # No bootstrapping needed; keep signature for compatibility
         return self._extract_features(obs_batch)
@@ -397,6 +427,12 @@ class SACAgent:
         rewards_t = torch.as_tensor(rewards, device=self.device, dtype=torch.float32)
         dones_t = torch.as_tensor(dones, device=self.device, dtype=torch.float32)
 
+        # Get current alpha (entropy coefficient)
+        if self.auto_entropy_tuning:
+            alpha = self.log_alpha.exp()
+        else:
+            alpha = self.entropy_coef
+
         # ===== Compute Q-targets =====
         with torch.no_grad():
             # Extract features for next state
@@ -416,7 +452,7 @@ class SACAgent:
 
             # Compute V(s') = E_π[Q(s',a) - α·log π(a|s')]
             # = Σ_a π(a|s') * [Q(s',a) - α·log π(a|s')]
-            next_v = (next_probs * (next_q_all - self.entropy_coef * next_log_probs)).sum(dim=-1)
+            next_v = (next_probs * (next_q_all - alpha * next_log_probs)).sum(dim=-1)
 
             # Q-target: r + γ * (1 - done) * V(s')
             q_target = rewards_t + self.gamma * (1 - dones_t) * next_v
@@ -467,13 +503,30 @@ class SACAgent:
 
         # Policy loss: maximize E_π[Q(s,a) - α·log π(a|s)]
         # = minimize E_π[α·log π(a|s) - Q(s,a)]
-        policy_loss = (probs * (self.entropy_coef * log_probs_all - q_all)).sum(dim=-1).mean()
+        policy_loss = (probs * (alpha * log_probs_all - q_all)).sum(dim=-1).mean()
 
         # Update policy
         self.actor_optimizer.zero_grad()
         policy_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=10.0)
         self.actor_optimizer.step()
+
+        # ===== Update entropy coefficient (alpha) =====
+        if self.auto_entropy_tuning:
+            # Compute current entropy
+            with torch.no_grad():
+                current_entropy = -(probs * log_probs_all).sum(dim=-1).mean()
+
+            # Alpha loss: minimize α * (entropy - target_entropy)
+            # This increases alpha when entropy is too low, decreases when too high
+            alpha_loss = self.log_alpha.exp() * (current_entropy - self.target_entropy)
+
+            # Update alpha
+            self.alpha_optimizer.zero_grad()
+            alpha_loss.backward()
+            self.alpha_optimizer.step()
+        else:
+            alpha_loss = torch.tensor(0.0)
 
         # ===== Update target networks =====
         self._polyak_update(self.q1, self.q1_target)
@@ -499,25 +552,29 @@ class SACAgent:
             "value_next": float(next_v.mean().item()),
             "value_target": float(q_target.mean().item()),
             "policy_entropy": float(policy_entropy.item()),
+            "alpha": self.alpha,  # Current entropy coefficient
+            "alpha_loss": float(alpha_loss.detach().cpu().item()) if self.auto_entropy_tuning else 0.0,
+            "target_entropy": self.target_entropy if self.auto_entropy_tuning else None,
         }
 
     def save(self, path: str):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save(
-            {
-                "cnn": self.cnn.state_dict(),
-                "actor": self.actor.state_dict(),
-                "q1": self.q1.state_dict(),
-                "q2": self.q2.state_dict(),
-                "q1_target": self.q1_target.state_dict(),
-                "q2_target": self.q2_target.state_dict(),
-                "cnn_optimizer": self.cnn_optimizer.state_dict(),
-                "actor_optimizer": self.actor_optimizer.state_dict(),
-                "q1_optimizer": self.q1_optimizer.state_dict(),
-                "q2_optimizer": self.q2_optimizer.state_dict(),
-            },
-            path,
-        )
+        save_dict = {
+            "cnn": self.cnn.state_dict(),
+            "actor": self.actor.state_dict(),
+            "q1": self.q1.state_dict(),
+            "q2": self.q2.state_dict(),
+            "q1_target": self.q1_target.state_dict(),
+            "q2_target": self.q2_target.state_dict(),
+            "cnn_optimizer": self.cnn_optimizer.state_dict(),
+            "actor_optimizer": self.actor_optimizer.state_dict(),
+            "q1_optimizer": self.q1_optimizer.state_dict(),
+            "q2_optimizer": self.q2_optimizer.state_dict(),
+        }
+        if self.auto_entropy_tuning:
+            save_dict["log_alpha"] = self.log_alpha
+            save_dict["alpha_optimizer"] = self.alpha_optimizer.state_dict()
+        torch.save(save_dict, path)
 
     def load(self, path: str):
         ckpt = torch.load(path, map_location=self.device)
@@ -531,3 +588,8 @@ class SACAgent:
         self.actor_optimizer.load_state_dict(ckpt["actor_optimizer"])
         self.q1_optimizer.load_state_dict(ckpt["q1_optimizer"])
         self.q2_optimizer.load_state_dict(ckpt["q2_optimizer"])
+        if self.auto_entropy_tuning and "log_alpha" in ckpt:
+            self.log_alpha = ckpt["log_alpha"].to(self.device)
+            self.log_alpha.requires_grad = True
+            if "alpha_optimizer" in ckpt:
+                self.alpha_optimizer.load_state_dict(ckpt["alpha_optimizer"])

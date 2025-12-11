@@ -309,6 +309,7 @@ def train_loop(
     recent_total_losses = []
     recent_value_preds = []
     recent_value_next = []
+    recent_alphas = []
 
     # Initialize
     obs, info = env.reset()
@@ -342,6 +343,7 @@ def train_loop(
         recent_total_losses.append(metrics["total_loss"])
         recent_value_preds.append(metrics["value_pred"])
         recent_value_next.append(metrics["value_next"])
+        recent_alphas.append(metrics["alpha"])
 
         # Track episode stats
         current_episode_reward += reward
@@ -400,6 +402,7 @@ def train_loop(
             mean_total_loss = np.mean(recent_total_losses[-1000:])
             mean_value_pred = np.mean(recent_value_preds[-1000:])
             mean_value_next = np.mean(recent_value_next[-1000:])
+            mean_alpha = np.mean(recent_alphas[-1000:])
 
             # Console output
             print(f"Step {step:,} | Ep: {episode_count} | "
@@ -407,6 +410,7 @@ def train_loop(
                   f"Len: {mean_length:5.1f} | "
                   f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
                   f"Ent: {mean_entropy:.3f} | "
+                  f"Alpha: {mean_alpha:.4f} | "
                   f"ValLoss: {mean_value_loss:.4f} | "
                   f"TotLoss: {mean_total_loss:.4f} | "
                   f"ActLoss: {mean_actor_loss:.4f} | "
@@ -426,6 +430,7 @@ def train_loop(
             tensorboard_writer.add_scalar("train/advantage_mean", mean_advantage, step)
             tensorboard_writer.add_scalar("train/advantage_std", std_advantage, step)
             tensorboard_writer.add_scalar("train/entropy", mean_entropy, step)
+            tensorboard_writer.add_scalar("train/alpha", mean_alpha, step)
             tensorboard_writer.add_scalar("train/log_prob", mean_log_prob, step)
             tensorboard_writer.add_scalar("train/value_pred_mean", mean_value_pred, step)
             tensorboard_writer.add_scalar("train/value_next_mean", mean_value_next, step)
@@ -443,6 +448,7 @@ def train_loop(
                         "train/advantage_mean": mean_advantage,
                         "train/advantage_std": std_advantage,
                         "train/entropy": mean_entropy,
+                        "train/alpha": mean_alpha,
                         "train/log_prob": mean_log_prob,
                         "train/value_loss": mean_value_loss,
                         "train/total_loss": mean_total_loss,
@@ -488,6 +494,7 @@ def train_agent(
     reduce_action_set,
     n_stack,
     input_size=128,
+    auto_entropy_tuning=True,
 ):
     """
     Train soft actor-critic style agent with optional latency simulation.
@@ -590,6 +597,7 @@ def train_agent(
         gamma=gamma,
         learning_rate=learning_rate,
         entropy_coef=entropy_coef,
+        auto_entropy_tuning=auto_entropy_tuning,
     )
 
     if load_model_path and os.path.exists(load_model_path):
@@ -612,7 +620,10 @@ def train_agent(
     print(f"Total timesteps: {total_timesteps:,}")
     print(f"Device: {device}")
     print(f"Learning rate (actor/CNN): {learning_rate}")
-    print(f"Entropy coef: {entropy_coef}")
+    if auto_entropy_tuning:
+        print(f"Auto entropy tuning: ENABLED (target entropy: {agent.target_entropy:.4f})")
+    else:
+        print(f"Entropy coef (fixed): {entropy_coef}")
     print(f"Gamma: {gamma}")
     if use_wandb and wandb_run:
         print(f"WandB: {wandb_run.url}")
@@ -668,7 +679,8 @@ def main():
     )
     parser.add_argument("--load-model", type=str, default=None, help="Path to pre-trained model to continue training")
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate for actor/CNN (default: 1e-4)")
-    parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01)")
+    parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01, only used if --no-auto-entropy-tuning)")
+    parser.add_argument("--no-auto-entropy-tuning", action="store_true", help="Disable automatic entropy tuning (use fixed entropy_coef instead)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
     parser.add_argument("--n-stack", type=int, default=4, help="Number of frames to stack (default: 4)")
     parser.add_argument("--input-size", type=int, default=128, help="Input image size (default: 128)")
@@ -753,6 +765,7 @@ def main():
         reduce_action_set=args.reduce_action_set,
         n_stack=args.n_stack,
         input_size=args.input_size,
+        auto_entropy_tuning=not args.no_auto_entropy_tuning,
     )
 
     print(f"\n{'=' * 60}")
