@@ -1,9 +1,0 @@
-Action set: reduced [0, 3, 4] (NOOP, RIGHT, LEFT)
-Logging to logs/plain_pong_sarsa_1M_linear
---- Configuration ---
-ROM: Pong
-Active Features: ~25,200
-Initial Energy:  0.2520
-STATUS: Safe. Meta-learning enabled.
----------------------
-Ep 1: reward=-21.0 mean_last_100=-21.00 step=826

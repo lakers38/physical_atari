@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Generic Swift-Sarsa Implementation for any ALE game using the SwiftTD paper
-feature construction (no frame differencing, 105x80x3 RGB binned to 8 levels).
+Generic Swift-Sarsa implementation for any ALE game using the SwiftTD-style
+AtariFeatureExtractor (105x80 RGB with frame differencing, 8-bin per-channel).
 Switch ROMs via --rom without changing the code; action set can be minimal or
 full.
+
+Includes simple memory-feature imprinting:
+- Extra binary features that remember when a parent feature fired k2 steps ago
+  and stay active for k1 steps.
+- Parents are active observation features with |w| >= tenure_threshold.
+- Generation is gated by tau_t = sum_{i active obs} exp(beta[i]) < eta.
 """
 
 import argparse
@@ -13,61 +19,11 @@ import cv2
 import os
 import random
 from datetime import datetime
+from typing import List, Optional
 
 from swiftsarsa import SwiftSarsaBinaryFeatures
 from shimmy.registration import register_gymnasium_envs
-
-
-class SwiftTDPaperPreprocessor:
-    """Preprocessing described in the SwiftTD paper."""
-
-    def __init__(self, num_actions):
-        self.height = 105
-        self.width = 80
-        self.channels = 3
-        self.bins = 8
-        self.num_actions = num_actions
-
-        self.pixels_per_channel = self.height * self.width
-        self.features_per_channel = self.pixels_per_channel * self.bins
-        self.total_pixel_features = self.features_per_channel * self.channels
-
-        self.action_offset = self.total_pixel_features
-        self.reward_offset = self.action_offset + self.num_actions
-        self.total_features = self.reward_offset + 3
-
-        print(f"Feature Vector Dimension: {self.total_features}")
-        print(f"  - Pixels: {self.total_pixel_features}")
-        print(f"  - Action: {self.num_actions}")
-        print(f"  - Reward: 3")
-
-    def reset(self):
-        pass
-
-    def extract(self, frame, prev_action, prev_reward):
-        active_indices = []
-
-        frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
-        binned = frame // 32
-
-        stride_pixel = self.bins
-        stride_channel = self.features_per_channel
-
-        for c in range(self.channels):
-            channel_bins = binned[:, :, c].flatten()
-            pixel_offsets = np.arange(self.pixels_per_channel) * stride_pixel
-            channel_start = c * stride_channel
-            indices = channel_start + pixel_offsets + channel_bins
-            active_indices.extend(indices)
-
-        if 0 <= prev_action < self.num_actions:
-            active_indices.append(self.action_offset + prev_action)
-
-        r_clipped = int(np.clip(prev_reward, -1, 1))
-        reward_idx = r_clipped + 1
-        active_indices.append(self.reward_offset + reward_idx)
-
-        return active_indices
+from agent_swift_sarsa import AtariFeatureExtractor
 
 
 def select_action(q_values, epsilon):
@@ -94,6 +50,20 @@ def resolve_action_set(env, action_set_choice: str):
     except Exception:
         action_meanings = []
 
+    if action_set_choice == "pong_reduced":
+        # Paper setup: NOOP, RIGHT, LEFT
+        reduced_actions = [0, 3, 4]
+        num_actions = len(reduced_actions)
+        labels = []
+        if action_meanings:
+            labels = [
+                action_meanings[a] if a < len(action_meanings) else str(a) for a in reduced_actions
+            ]
+        desc = f"Action set: Pong reduced {reduced_actions} (NOOP, RIGHT, LEFT)"
+        if labels:
+            desc += f" meanings={labels}"
+        return reduced_actions, num_actions, desc, action_meanings
+
     if action_set_choice == "full":
         desc = "Action set: full ALE action space"
         if action_meanings:
@@ -117,6 +87,173 @@ def resolve_action_set(env, action_set_choice: str):
         if action_meanings:
             fallback_desc += f" ({len(action_meanings)} actions)"
         return None, env.action_space.n, fallback_desc, action_meanings
+
+
+# ----------------------------------------------------------------------
+# Memory feature imprinting
+# ----------------------------------------------------------------------
+
+
+class MemoryFeature:
+    """
+    Memory feature using a bitwise shift register to handle overlapping activations.
+    Acts like a delay line: if the parent fires again while waiting/active, the window extends.
+    """
+
+    def __init__(self, parent_idx: int, feature_idx: int, k1: int, k2: int):
+        self.parent_idx = parent_idx
+        self.feature_idx = feature_idx
+        self.k1 = k1
+        self.k2 = k2
+
+        # Bit 0 is the parent's status at time T, bit 1 at T-1, etc. Seed with 1 to mark creation.
+        self.history = 1
+        # Mask selects bits in [k2, k2 + k1)
+        self.window_mask = ((1 << self.k1) - 1) << self.k2
+
+    def update(self, parent_active: bool) -> bool:
+        """Shift history, insert new parent state, and report if the memory feature is active."""
+        self.history = ((self.history << 1) | int(parent_active)) & ((1 << 64) - 1)
+        return (self.history & self.window_mask) > 0
+
+
+class ImprintingFeatureManager:
+    """
+    Generates and manages delayed memory features with pruning and slot reuse.
+    - Parents are active obs features with |w| >= tenure_threshold.
+    - tau_t computed over all active features (obs + memory).
+    - Prunes idle memory features to recycle slots.
+    - Resets learner parameters when recycling to avoid stale weights/betas.
+    """
+
+    def __init__(
+        self,
+        learner: SwiftSarsaBinaryFeatures,
+        obs_features: int,
+        max_memory_features: int,
+        k_per_step: int,
+        k1_values: List[int],
+        k2_values: List[int],
+        tenure_threshold: float,
+        eta: float,
+        alpha_init: float,
+        prune_interval: int = 200,
+        idle_threshold: float = 0.001,
+    ):
+        self.learner = learner
+        self.obs_features = obs_features
+        self.max_memory_features = max_memory_features
+        self.k_per_step = k_per_step
+        self.k1_values = k1_values
+        self.k2_values = k2_values
+        self.tenure_threshold = tenure_threshold
+        self.eta = eta
+        self.alpha_init = alpha_init
+        self.prune_interval = prune_interval
+        self.idle_threshold = idle_threshold
+
+        self.active_slots: dict[int, MemoryFeature] = {}
+        self.free_slots = list(range(max_memory_features))
+        self.step_counter = 0
+        self.active_sum = 0
+        self.active_steps = 0
+
+    def build_feature_vector(self, obs_indices: List[int]) -> List[int]:
+        """
+        Given active observation feature indices, update memory features and
+        return combined obs + memory feature indices.
+        """
+        self.step_counter += 1
+        obs_set = set(obs_indices)
+
+        # Update existing memory features
+        active_mem_indices = []
+        for slot, mem in self.active_slots.items():
+            parent_active = mem.parent_idx in obs_set
+            if mem.update(parent_active):
+                active_mem_indices.append(mem.feature_idx)
+
+        full_indices = obs_indices + active_mem_indices
+        self.active_sum += len(active_mem_indices)
+        self.active_steps += 1
+
+        if self.prune_interval > 0 and self.step_counter % self.prune_interval == 0:
+            self._prune_features()
+
+        self._imprint_new_memory_features(obs_indices, full_indices)
+        return full_indices
+
+    def _imprint_new_memory_features(self, obs_indices: List[int], full_indices: List[int]) -> None:
+        """Possibly generate up to k_per_step new memory features this step."""
+        if not self.free_slots or self.k_per_step <= 0:
+            return
+
+        # tau_t over all active features (obs + memory)
+        betas = np.array(self.learner.get_feature_betas_max_over_actions())
+        tau = float(np.sum(np.exp(betas[full_indices])))
+
+        # Gate by eta
+        if tau >= self.eta:
+            return
+
+        # Tenured parents: active obs features with large |w|
+        weights = np.array(self.learner.get_feature_weights_max_over_actions())
+        parent_candidates = [i for i in obs_indices if abs(weights[i]) >= self.tenure_threshold]
+        if not parent_candidates:
+            return
+
+        generated = 0
+        while generated < self.k_per_step and self.free_slots:
+            if tau >= self.eta:
+                break
+
+            parent_idx = random.choice(parent_candidates)
+            k1 = random.choice(self.k1_values)
+            k2 = random.choice(self.k2_values)
+
+            slot = self.free_slots.pop()
+            feature_idx = self.obs_features + slot
+
+            if hasattr(self.learner, "reset_feature"):
+                try:
+                    self.learner.reset_feature(feature_idx, self.alpha_init)
+                except Exception:
+                    pass
+
+            self.active_slots[slot] = MemoryFeature(parent_idx, feature_idx, k1, k2)
+            tau += self.alpha_init  # heuristic increment to avoid overshooting eta badly
+            generated += 1
+
+    def _prune_features(self):
+        """Remove idle memory features (low |w|) to recycle slots."""
+        if not self.active_slots:
+            return
+
+        weights = np.array(self.learner.get_feature_weights_max_over_actions())
+        slots_to_remove = []
+
+        for slot, mem in self.active_slots.items():
+            if abs(weights[mem.feature_idx]) < self.idle_threshold:
+                slots_to_remove.append(slot)
+
+        max_remove = self.k_per_step * 5 if self.k_per_step > 0 else len(slots_to_remove)
+        for slot in slots_to_remove[:max_remove]:
+            del self.active_slots[slot]
+            self.free_slots.append(slot)
+
+    def pop_active_stats(self) -> float:
+        """Return avg active memory features per step since last call and reset counters."""
+        if self.active_steps == 0:
+            return 0.0
+        avg = float(self.active_sum) / float(self.active_steps)
+        self.active_sum = 0
+        self.active_steps = 0
+        return avg
+
+
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
 
 
 def main():
@@ -155,9 +292,32 @@ def main():
                         help="Record every N-th episode when video_dir is set (default: 1 = every episode).")
     parser.add_argument("--log_dir", type=str, default="logs", help="Directory to write training logs.")
     parser.add_argument("--log_file", type=str, default=None, help="Optional explicit log file name.")
-    parser.add_argument("--action_set", choices=["minimal", "full"], default="minimal",
-                        help="Use ALE minimal action set (default) or the full action space.")
+    parser.add_argument(
+        "--action_set",
+        choices=["minimal", "full", "pong_reduced"],
+        default=None,
+        help="Action set: minimal/full generic, or pong_reduced=[0,3,4] paper setup (default: pong_reduced for Pong, minimal otherwise).",
+    )
+    # Imprinting args
+    parser.add_argument("--use_imprinting", action="store_true",
+                        help="Enable memory feature generation via imprinting.")
+    parser.add_argument("--max_memory_features", type=int, default=1000,
+                        help="Maximum number of memory features to allocate.")
+    parser.add_argument("--imprint_k_per_step", type=int, default=2,
+                        help="Maximum new memory features to generate per step.")
+    parser.add_argument("--imprint_k1s", type=int, nargs="+", default=[2, 3, 4],
+        help="Durations k1 (active steps) to sample for new memory features.")
+    parser.add_argument("--imprint_k2s", type=int, nargs="+", default=[1, 2, 4],
+                        help="Delays k2 (wait steps) to sample for new memory features.")
+    parser.add_argument("--tenure_threshold", type=float, default=0.1,
+                        help="Absolute weight magnitude to treat a feature as tenured.")
+    parser.add_argument("--imprint_idle_threshold", type=float, default=0.001,
+                    help="Weight magnitude below which a feature is pruned (default: 0.001).")
+    parser.add_argument("--imprint_prune_interval", type=int, default=200,
+                    help="How often (steps) to check for pruning (default: 200).")
     args = parser.parse_args()
+    if args.action_set is None:
+        args.action_set = "pong_reduced" if args.rom.lower() == "pong" else "minimal"
 
     betas_dir = args.betas_dir or os.path.join("runs", f"{args.rom.lower()}_paper")
 
@@ -202,10 +362,24 @@ def main():
     if action_map is None and action_meanings:
         log(f"Action meanings: {action_meanings}")
 
-    extractor = SwiftTDPaperPreprocessor(num_actions)
+    extractor = AtariFeatureExtractor(
+        height=105,
+        width=80,
+        num_bins=8,
+        num_actions=num_actions,
+        use_grayscale=False,
+        use_frame_diff=False,  # Match SwiftTD paper: no frame differencing
+        K_actions=0,
+        K_rewards=0,
+        use_reward_gap=False,
+    )
+
+    obs_feature_count = extractor.total_features
+    max_mem = args.max_memory_features if args.use_imprinting else 0
+    total_feature_count = obs_feature_count + max_mem
 
     learner = SwiftSarsaBinaryFeatures(
-        extractor.total_features,
+        total_feature_count,
         num_actions,
         args.lambda_val,
         args.alpha,
@@ -216,22 +390,42 @@ def main():
         args.swift_eta_min
     )
 
+    imprint_mgr: Optional[ImprintingFeatureManager] = None
+    if args.use_imprinting:
+        imprint_mgr = ImprintingFeatureManager(
+            learner=learner,
+            obs_features=obs_feature_count,
+            max_memory_features=args.max_memory_features,
+            k_per_step=args.imprint_k_per_step,
+            k1_values=args.imprint_k1s,
+            k2_values=args.imprint_k2s,
+            tenure_threshold=args.tenure_threshold,
+            eta=args.eta,
+            alpha_init=args.alpha,
+            idle_threshold=args.imprint_idle_threshold,
+            prune_interval=args.imprint_prune_interval,
+
+        )
+
     log(f"Logging to {log_path}")
     log(f"--- Configuration ---")
     log(f"ROM: {args.rom}")
-    log(f"Active Features: ~25,200")
-    log(f"Initial Energy:  {25200 * args.alpha:.4f}")
-    if (25200 * args.alpha) >= args.eta:
-        log("WARNING: Unsafe initialization! C++ Kill Switch will trigger.")
-    else:
-        log("STATUS: Safe. Meta-learning enabled.")
+    log(f"Observation Features: {obs_feature_count}")
+    log(f"Total Features (with memory cap): {total_feature_count}")
+    log(f"Initial Energy:  {obs_feature_count * args.alpha:.4f}")
+    if args.use_imprinting:
+        log(
+            f"Imprinting: max_mem={args.max_memory_features} k_per_step={args.imprint_k_per_step} "
+            f"k1s={args.imprint_k1s} k2s={args.imprint_k2s} tenure={args.tenure_threshold}"
+        )
+        log("Imprinting enabled.")
     log(f"---------------------")
 
     step = 0
     episode_idx = 0
     returns = []
     next_heatmap_at = args.heatmap_every_steps if args.heatmap_every_steps > 0 else None
-    credit_accum = np.zeros((105, 80), dtype=np.float32) if args.credit_heatmap else None
+    credit_accum = np.zeros((extractor.height, extractor.width), dtype=np.float32) if args.credit_heatmap else None
 
     os.makedirs(betas_dir, exist_ok=True)
     if args.video_dir:
@@ -240,15 +434,39 @@ def main():
     while step < args.decisions:
         frame, _ = env.reset(seed=args.seed + episode_idx)
         extractor.reset()
+        extractor.update_reward(0.0)
         learner.reset_episode()
 
-        features = extractor.extract(frame, 0, 0.0)
+        obs_indices = extractor.extract(frame)
+        features = (
+            imprint_mgr.build_feature_vector(obs_indices)
+            if imprint_mgr is not None else obs_indices
+        )
 
         eps = current_epsilon(step, args.epsilon_start, args.epsilon_end, args.epsilon_decay_steps)
         q_vals = learner.get_action_values(features)
-        action = select_action(q_vals, eps)
+        serve_action = None
+        if args.rom.lower() == "pong":
+            if action_map is None:
+                # Full action space: 1 is FIRE
+                serve_action = 1 if num_actions > 1 else None
+            else:
+                # Find FIRE within the chosen mapping if available
+                am_list = list(action_map)
+                fire_ale_idx = None
+                if action_meanings:
+                    try:
+                        fire_ale_idx = action_meanings.index("FIRE")
+                    except ValueError:
+                        fire_ale_idx = None
+                if fire_ale_idx is not None and fire_ale_idx in am_list:
+                    serve_action = am_list.index(fire_ale_idx)
+                elif 1 in am_list:
+                    serve_action = am_list.index(1)
+        action = serve_action if serve_action is not None else select_action(q_vals, eps)
 
         learner.learn(features, 0.0, 0.0, action)
+        extractor.set_prev_action(action)
 
         writer = None
         record_this_episode = bool(args.video_dir) and (
@@ -302,11 +520,17 @@ def main():
                 if done:
                     break
 
-            next_features = extractor.extract(next_frame, action, total_clipped_r)
+            extractor.update_reward(total_clipped_r)
+            obs_next = extractor.extract(next_frame)
+            next_features = (
+                imprint_mgr.build_feature_vector(obs_next)
+                if imprint_mgr is not None else obs_next
+            )
 
             eps = current_epsilon(step, args.epsilon_start, args.epsilon_end, args.epsilon_decay_steps)
             q_vals_next = learner.get_action_values(next_features)
             action_next = select_action(q_vals_next, eps)
+            extractor.set_prev_action(action_next)
 
             gamma = 0.0 if term else args.discount
             learner.learn(next_features, total_clipped_r, gamma, action_next)
@@ -316,6 +540,9 @@ def main():
             step += frames_used
 
             if next_heatmap_at is not None and step >= next_heatmap_at:
+                if extractor.num_channels != 3:
+                    next_heatmap_at += args.heatmap_every_steps
+                    continue
                 try:
                     import imageio
                     betas = np.array(learner.get_feature_betas_max_over_actions())
@@ -324,16 +551,18 @@ def main():
                     frame_resized = cv2.resize(next_frame, (extractor.width, extractor.height), interpolation=cv2.INTER_AREA)
                     binned = frame_resized // 32
 
-                    pixels_per_channel = extractor.pixels_per_channel
-                    bins = extractor.bins
-                    features_per_channel = extractor.features_per_channel
+                    pixels_per_channel = extractor.height * extractor.width
+                    bins = extractor.num_bins
+                    features_per_channel = pixels_per_channel * bins
 
                     pixel_offsets = np.arange(pixels_per_channel) * bins
                     heatmaps = []
-                    for c in range(extractor.channels):
+                    for c in range(3):
                         bin_vals = binned[:, :, c].reshape(-1).astype(np.int64)
                         channel_start = c * features_per_channel
                         indices = channel_start + pixel_offsets + bin_vals
+                        # Only observation features contribute to these indices,
+                        # so this ignores memory features (which is fine for now).
                         heatmaps.append(alphas[indices].reshape(extractor.height, extractor.width))
 
                     active_heatmap = np.max(np.stack(heatmaps, axis=0), axis=0)
@@ -358,6 +587,13 @@ def main():
         returns.append(episode_reward)
         window_mean = float(np.mean(returns[-100:])) if returns else 0.0
         log(f"Ep {episode_idx}: reward={episode_reward:.1f} mean_last_100={window_mean:.2f} step={step}")
+        if imprint_mgr is not None and episode_idx % 10 == 0:
+            avg_active = imprint_mgr.pop_active_stats() if imprint_mgr is not None else 0.0
+            log(
+                f"[Imprint] mem_features={len(imprint_mgr.active_slots)} "
+                f"free_slots={len(imprint_mgr.free_slots)} "
+                f"avg_active_per_step={avg_active:.3f}"
+            )
         close_writer()
 
     env.close()
