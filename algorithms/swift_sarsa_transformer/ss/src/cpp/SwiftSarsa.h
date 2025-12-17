@@ -47,6 +47,7 @@ public:
     std::vector<float> get_beta() const { return this->beta; }
     std::vector<float> get_last_alpha() const { return this->last_alpha; }
     float get_last_delta() const { return this->last_delta; }
+    void set_weights(const std::vector<float>& weights, const std::vector<float>& beta_values, const std::vector<float>& last_alpha_values);
     float learn(std::vector<std::pair<int, float>>& indices, float reward, float gamma,
                 int action);
     SwiftSarsa(int num_of_features, int num_of_actions, float lambda, float alpha,

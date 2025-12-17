@@ -31,7 +31,12 @@ PYBIND11_MODULE(swift_sarsa, m)
           .def("get_weights", &SwiftSarsa::get_weights, "Return current weight vector")
           .def("get_beta", &SwiftSarsa::get_beta, "Return current beta (log step sizes)")
           .def("get_last_alpha", &SwiftSarsa::get_last_alpha, "Return last adaptive step sizes")
-          .def("get_last_delta", &SwiftSarsa::get_last_delta, "Return TD error from last update");
+          .def("get_last_delta", &SwiftSarsa::get_last_delta, "Return TD error from last update")
+          .def("set_weights", &SwiftSarsa::set_weights,
+               "Set weights, beta, and last_alpha from saved checkpoint. Resets eligibility traces.",
+               py::arg("weights"),
+               py::arg("beta"),
+               py::arg("last_alpha"));
 
      py::class_<SwiftSarsaBinaryFeatures>(m, "SwiftSarsaBinaryFeatures")
           .def(py::init<int, int, float, float, float, float, float, float, float>(),

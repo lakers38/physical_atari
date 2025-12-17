@@ -57,6 +57,10 @@ def main(args):
         from agent_random import Agent
     elif args.agent_type == 'agent_ppo':
         from algorithms.ppo.agent_ppo import Agent
+    elif args.agent_type == 'agent_ss':
+        from agent_ss import Agent
+    elif args.agent_type == 'agent_sac':
+        from algorithms.sac.agent_sac import Agent
     else:
         raise ValueError(f"Invalid agent type={args.agent_type}")
 
@@ -258,6 +262,7 @@ def main(args):
                         "priority_eps": args.rainbow_priority_eps,
                         "epsilon_start": 0.0,
                         "epsilon_end": 0.0,
+                    }
                 elif args.agent_type == 'agent_r2d2':
                     agent_args = {
                         "gpu": args.gpu,
@@ -274,7 +279,34 @@ def main(args):
                     }
                 elif args.agent_type == 'agent_ppo':
                     agent_args = {
-                        "use_wandb": args.wandb
+                        "use_wandb": args.wandb,
+                        "eval_mode": args.ppo_eval_mode
+                    }
+                elif args.agent_type == 'agent_ss':
+                    agent_args = {
+                        "gpu": args.gpu,
+                        "ppo_weights_path": args.ss_ppo_weights_path,
+                        "sarsa_weights_path": args.ss_sarsa_weights_path,
+                        "lambda_": args.ss_lambda,
+                        "alpha": args.ss_alpha,
+                        "meta_step_size": args.ss_meta_step_size,
+                        "eta": args.ss_eta,
+                        "decay": args.ss_decay,
+                        "epsilon": args.ss_epsilon,
+                        "eta_min": args.ss_eta_min,
+                        "exploration": args.ss_exploration,
+                        "eps_greedy_start": args.ss_eps_greedy_start,
+                        "eps_greedy_end": args.ss_eps_greedy_end,
+                        "eps_greedy_end_timestamp": args.ss_eps_greedy_end_timestamp,
+                        "softmax_temp": args.ss_softmax_temp,
+                        "gamma": args.ss_gamma,
+                        "frame_skip": args.ss_frame_skip,
+                    }
+                elif args.agent_type == 'agent_sac':
+                    agent_args = {
+                        "gpu": args.gpu,
+                        "use_wandb": args.wandb,
+                        "eval_mode": args.sac_eval_mode,
                     }
                 else:
                     agent_args = {"gpu": args.gpu}
@@ -357,7 +389,7 @@ def main(args):
 
                     if save_incremental_model and (u + 1) // args.save_model_increment != last_model_save:
                         last_model_save = (u + 1) // args.save_model_increment
-                        filename = f'{run_dir}/{game}_{args.agent_type}.model'
+                        filename = f'{run_dir}/{game}_{args.agent_type}_{u + 1}.model'
                         logger.info('writing ' + filename)
                         agent.save_model(filename)
 
@@ -631,9 +663,9 @@ def get_argument_parser():
         '--log_level', type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
     )
     parser.add_argument('--game_config', type=str, default="configs/games/ms_pacman.json")
-    parser.add_argument('--camera_config', type=str, default="configs/cameras/camera_kiyo_pro.json")
+    parser.add_argument('--camera_config', type=str, default="configs/cameras/camera_elgato.json")
     parser.add_argument('--joystick_config', type=str, default="configs/controllers/robotroller.json")
-    parser.add_argument('--detection_config', type=str, default="configs/screen_detection/fixed.json")
+    parser.add_argument('--detection_config', type=str, default="configs/screen_detection/april_tags.json")
     parser.add_argument('--description', type=str, default="Experiment description")
     parser.add_argument(
         '--score_detector_type',
@@ -645,7 +677,7 @@ def get_argument_parser():
         '--agent_type',
         type=str,
         default="agent_delay_target",
-        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_rainbow", "agent_ppo"],
+        choices=["agent_delay_target", "agent_random", "agent_dqn", "agent_rainbow", "agent_ppo", "agent_ss", "agent_sac"],
     )
     parser.add_argument(
         '--reduce_action_set',
@@ -698,21 +730,10 @@ def get_argument_parser():
     parser.add_argument('--rainbow_priority_beta', type=float, default=0.4)
     parser.add_argument('--rainbow_priority_beta_increment', type=float, default=1e-6)
     parser.add_argument('--rainbow_priority_eps', type=float, default=1e-6)
-
-    # PPO-specific configuration
-    # parser.add_argument('--ppo_learning_rate', type=float, default=2.5e-4)
-    # parser.add_argument('--ppo_n_steps', type=int, default=256)
-    # parser.add_argument('--ppo_batch_size', type=int, default=128)
-    # parser.add_argument('--ppo_n_epochs', type=int, default=10)
-    # parser.add_argument('--ppo_gamma', type=float, default=0.99)
-    # parser.add_argument('--ppo_gae_lambda', type=float, default=0.95)
-    # parser.add_argument('--ppo_clip_range', type=float, default=0.1)
-    # parser.add_argument('--ppo_ent_coef', type=float, default=0.01)
-    # parser.add_argument('--ppo_vf_coef', type=float, default=0.5)
-    # parser.add_argument('--ppo_max_grad_norm', type=float, default=0.5)
-    # parser.add_argument('--ppo_frame_skip', type=int, default=4)
     parser.add_argument('--wandb', action='store_true', default=False,
                         help='Enable wandb logging for all metrics (training, episodes, rewards, FPS, actions)')
+    parser.add_argument('--ppo_eval_mode', action='store_true', default=False,
+                        help='Run PPO in evaluation mode (no training, only inference)')
 
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--load_model', type=str, default=None)
@@ -732,7 +753,7 @@ def get_argument_parser():
     # PPO-specific configuration (used when --agent_type=agent_ppo)
     parser.add_argument('--ppo_learning_rate', type=float, default=2.5e-4, help="PPO learning rate")
     parser.add_argument('--ppo_n_steps', type=int, default=128, help="PPO steps per update")
-    parser.add_argument('--ppo_batch_size', type=int, default=256, help="PPO minibatch size")
+    parser.add_argument('--ppo_batch_size', type=int, default=64, help="PPO minibatch size")
     parser.add_argument('--ppo_n_epochs', type=int, default=4, help="PPO epochs per update")
     parser.add_argument('--ppo_gamma', type=float, default=0.99, help="PPO discount factor")
     parser.add_argument('--ppo_gae_lambda', type=float, default=0.95, help="PPO GAE lambda")
@@ -754,6 +775,28 @@ def get_argument_parser():
     parser.add_argument('--r2d2_block_length', type=int, default=120, help="R2D2 block length (burn_in + learning)")
     parser.add_argument('--r2d2_frame_skip', type=int, default=4, help="R2D2 frame skip (agent acts every N frames)")
     parser.add_argument('--r2d2_resize_to_84', type=int, default=1, choices=[0, 1], help="R2D2 resize to 84x84 (1=yes, 0=no)")
+
+    # SAC-specific configuration (used when --agent_type=agent_sac)
+    parser.add_argument('--sac_eval_mode', action='store_true', default=False, help='Run SAC in evaluation mode (no training)')
+
+    # Swift SARSA-specific configuration (used when --agent_type=agent_ss)
+    parser.add_argument('--ss_ppo_weights_path', type=str, default=None, help="Path to pretrained PPO model for feature extraction")
+    parser.add_argument('--ss_sarsa_weights_path', type=str, default=None, help="Path to pretrained Swift SARSA weights (.npz file)")
+    parser.add_argument('--ss_lambda', type=float, default=0.95, help="Swift SARSA eligibility trace decay")
+    parser.add_argument('--ss_alpha', type=float, default=1e-7, help="Swift SARSA learning rate")
+    parser.add_argument('--ss_meta_step_size', type=float, default=1e-3, help="Swift SARSA meta step size")
+    parser.add_argument('--ss_eta', type=float, default=1.0, help="Swift SARSA eta parameter")
+    parser.add_argument('--ss_decay', type=float, default=0.999, help="Swift SARSA decay parameter")
+    parser.add_argument('--ss_epsilon', type=float, default=0.10, help="Swift SARSA epsilon parameter")
+    parser.add_argument('--ss_eta_min', type=float, default=1e-8, help="Swift SARSA minimum eta")
+    parser.add_argument('--ss_exploration', type=str, default='softmax', choices=['softmax', 'epsilon_greedy'], help="Swift SARSA exploration strategy")
+    parser.add_argument('--ss_eps_greedy_start', type=float, default=1.0, help="Swift SARSA epsilon-greedy start value")
+    parser.add_argument('--ss_eps_greedy_end', type=float, default=0.05, help="Swift SARSA epsilon-greedy end value")
+    parser.add_argument('--ss_eps_greedy_end_timestamp', type=int, default=100_000, help="Swift SARSA epsilon-greedy decay timesteps")
+    parser.add_argument('--ss_softmax_temp', type=float, default=0.1, help="Swift SARSA softmax temperature")
+    parser.add_argument('--ss_gamma', type=float, default=0.99, help="Swift SARSA discount factor")
+    parser.add_argument('--ss_frame_skip', type=int, default=4, help="Swift SARSA frame skip (agent acts every N frames)")
+
     return parser
 
 

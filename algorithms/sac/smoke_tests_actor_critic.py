@@ -92,7 +92,7 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
 
     for t in range(steps):
         # Select action for current step
-        actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
+        actions, log_probs, entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
         action_counts[action] += 1
 
@@ -109,7 +109,6 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
         agent.update(
             obs[np.newaxis], actions, [reward],
             next_obs[np.newaxis], [done],
-            log_probs, entropy, feats
         )
 
         obs = next_obs
@@ -148,7 +147,7 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
 
     for t in range(steps):
         # Select action
-        actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
+        actions, log_probs, entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
         action_counts[action] += 1
 
@@ -167,7 +166,6 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
         agent.update(
             obs[np.newaxis], actions, [reward],
             next_obs[np.newaxis], [done],
-            log_probs, entropy, feats
         )
 
         # Reset on terminal
@@ -215,7 +213,7 @@ def test_value_function_learns_returns():
 
     for t in range(steps):
         # Select action
-        actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
+        actions, log_probs, entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
 
         # Deterministic reward
@@ -232,7 +230,6 @@ def test_value_function_learns_returns():
         metrics = agent.update(
             obs[np.newaxis], actions, [reward],
             next_obs[np.newaxis], [done],
-            log_probs, entropy, feats
         )
 
         advantages.append(metrics["advantage"])
@@ -292,7 +289,6 @@ def test_lifetime_return_error_decreases():
         metrics = agent.update(
             obs[np.newaxis], actions, [true_return],
             obs[np.newaxis], [False],
-            log_probs, entropy, feats
         )
 
         # Lifetime error proxy: squared error of current value prediction

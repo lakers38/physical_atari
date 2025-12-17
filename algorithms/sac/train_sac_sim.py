@@ -37,7 +37,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wra
 from wrapper_v0_2 import LatencyModel
 
 sys.path.append(os.path.dirname(__file__))
-from agent_actor_critic import SACAgent
+from sac import SACAgent, ReplayBuffer
 
 # Register ALE environments
 gym.register_envs(ale_py)
@@ -284,6 +284,11 @@ def train_loop(
     env: gym.Env,
     eval_env: gym.Env,
     total_timesteps: int,
+    replay_buffer: ReplayBuffer,
+    batch_size: int,
+    learning_starts: int,
+    train_freq: int,
+    gradient_steps: int,
     tensorboard_writer: SummaryWriter,
     checkpoint_dir: str,
     model_name: str,
@@ -309,6 +314,7 @@ def train_loop(
     recent_total_losses = []
     recent_value_preds = []
     recent_value_next = []
+    recent_alphas = []
 
     # Initialize
     obs, info = env.reset()
@@ -318,7 +324,7 @@ def train_loop(
 
     for step in range(total_timesteps):
         # Select action
-        actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
+        actions, _, _, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
 
         # Environment step
@@ -328,25 +334,35 @@ def train_loop(
         # Clip reward for stable learning
         reward_clipped = np.clip(reward, -1.0, 1.0)
 
-        # Update agent
-        metrics = agent.update(
-            obs[np.newaxis], actions, [reward_clipped], next_obs[np.newaxis], [done], log_probs, entropy, feats
-        )
+        # Store transition
+        replay_buffer.add(obs, action, reward_clipped, next_obs, done)
 
-        # Track metrics for logging window
-        recent_advantages.append(metrics["advantage"])
-        recent_entropies.append(entropy.item())
-        recent_actor_losses.append(metrics["actor_loss"])
-        recent_log_probs.append(log_probs.item())
-        recent_value_losses.append(metrics["value_loss"])
-        recent_total_losses.append(metrics["total_loss"])
-        recent_value_preds.append(metrics["value_pred"])
-        recent_value_next.append(metrics["value_next"])
+        metrics = None
+        if (
+            replay_buffer.size >= batch_size
+            and step >= learning_starts
+            and step % train_freq == 0
+        ):
+            for _ in range(gradient_steps):
+                batch = replay_buffer.sample(batch_size)
+                metrics = agent.update(*batch)
+
+                # Track metrics for logging window
+                recent_advantages.append(metrics["advantage"])
+                recent_entropies.append(metrics["policy_entropy"])
+                recent_actor_losses.append(metrics["actor_loss"])
+                recent_log_probs.append(metrics["log_prob_mean"])
+                recent_value_losses.append(metrics["value_loss"])
+                recent_total_losses.append(metrics["total_loss"])
+                recent_value_preds.append(metrics["value_pred"])
+                recent_value_next.append(metrics["value_next"])
+                recent_alphas.append(metrics["alpha"])
 
         # Track episode stats
         current_episode_reward += reward
         current_episode_length += 1
-        episode_values.append(metrics["value_pred"])
+        if metrics is not None:
+            episode_values.append(metrics["value_pred"])
         episode_rewards_stream.append(reward)
 
         # Handle episode end
@@ -383,7 +399,7 @@ def train_loop(
             obs = next_obs
 
         # Periodic logging
-        if step % 1000 == 0 and len(episode_rewards) > 0:
+        if step % 1000 == 0 and len(episode_rewards) > 0 and len(recent_advantages) > 0:
             mean_reward = np.mean(episode_rewards[-100:])
             mean_length = np.mean(episode_lengths[-100:])
             max_reward = np.max(episode_rewards[-100:]) if len(episode_rewards) > 0 else 0
@@ -400,6 +416,7 @@ def train_loop(
             mean_total_loss = np.mean(recent_total_losses[-1000:])
             mean_value_pred = np.mean(recent_value_preds[-1000:])
             mean_value_next = np.mean(recent_value_next[-1000:])
+            mean_alpha = np.mean(recent_alphas[-1000:])
 
             # Console output
             print(f"Step {step:,} | Ep: {episode_count} | "
@@ -407,6 +424,7 @@ def train_loop(
                   f"Len: {mean_length:5.1f} | "
                   f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
                   f"Ent: {mean_entropy:.3f} | "
+                  f"Alpha: {mean_alpha:.4f} | "
                   f"ValLoss: {mean_value_loss:.4f} | "
                   f"TotLoss: {mean_total_loss:.4f} | "
                   f"ActLoss: {mean_actor_loss:.4f} | "
@@ -426,6 +444,7 @@ def train_loop(
             tensorboard_writer.add_scalar("train/advantage_mean", mean_advantage, step)
             tensorboard_writer.add_scalar("train/advantage_std", std_advantage, step)
             tensorboard_writer.add_scalar("train/entropy", mean_entropy, step)
+            tensorboard_writer.add_scalar("train/alpha", mean_alpha, step)
             tensorboard_writer.add_scalar("train/log_prob", mean_log_prob, step)
             tensorboard_writer.add_scalar("train/value_pred_mean", mean_value_pred, step)
             tensorboard_writer.add_scalar("train/value_next_mean", mean_value_next, step)
@@ -443,6 +462,7 @@ def train_loop(
                         "train/advantage_mean": mean_advantage,
                         "train/advantage_std": std_advantage,
                         "train/entropy": mean_entropy,
+                        "train/alpha": mean_alpha,
                         "train/log_prob": mean_log_prob,
                         "train/value_loss": mean_value_loss,
                         "train/total_loss": mean_total_loss,
@@ -477,11 +497,15 @@ def train_agent(
     learning_rate,
     entropy_coef,
     gamma,
-    value_coef,
     seed,
     load_model_path,
     record_videos,
     video_freq,
+    buffer_size,
+    batch_size,
+    learning_starts,
+    train_freq,
+    gradient_steps,
     use_wandb,
     wandb_project,
     wandb_entity,
@@ -489,6 +513,7 @@ def train_agent(
     reduce_action_set,
     n_stack,
     input_size=128,
+    auto_entropy_tuning=True,
 ):
     """
     Train soft actor-critic style agent with optional latency simulation.
@@ -503,11 +528,15 @@ def train_agent(
         learning_rate: Learning rate
         entropy_coef: Entropy bonus coefficient
         gamma: Discount factor
-        value_coef: Weight on critic loss in total loss
         seed: Random seed
         load_model_path: Path to pre-trained model to continue training
         record_videos: If True, record gameplay videos
         video_freq: Record video every N episodes
+        buffer_size: Replay buffer capacity
+        batch_size: Minibatch size for gradient steps
+        learning_starts: Number of steps to collect transitions before updates
+        train_freq: Environment steps per training phase
+        gradient_steps: Number of gradient updates per training phase
         use_wandb: If True, log to Weights & Biases
         wandb_project: WandB project name
         wandb_entity: WandB entity/team name
@@ -530,7 +559,6 @@ def train_agent(
             "simulate_latency": simulate_latency,
             "learning_rate": learning_rate,
             "gamma": gamma,
-            "value_coef": value_coef,
             "ent_coef": entropy_coef,
             "device": device,
             "algorithm": "SoftActorCritic",
@@ -593,12 +621,18 @@ def train_agent(
         gamma=gamma,
         learning_rate=learning_rate,
         entropy_coef=entropy_coef,
-        value_coef=value_coef,
+        auto_entropy_tuning=auto_entropy_tuning,
     )
 
     if load_model_path and os.path.exists(load_model_path):
         print(f"Loading pre-trained model from {load_model_path}")
         agent.load(load_model_path)
+
+    # Replay buffer for off-policy updates
+    replay_buffer = ReplayBuffer(
+        capacity=buffer_size,
+        obs_shape=(input_size, input_size, n_stack),
+    )
 
     # TensorBoard
     tensorboard_log_dir = os.path.join(experiment_dir, "logs", "tensorboard")
@@ -616,9 +650,13 @@ def train_agent(
     print(f"Total timesteps: {total_timesteps:,}")
     print(f"Device: {device}")
     print(f"Learning rate (actor/CNN): {learning_rate}")
-    print(f"Entropy coef: {entropy_coef}")
+    if auto_entropy_tuning:
+        print(f"Auto entropy tuning: ENABLED (target entropy: {agent.target_entropy:.4f})")
+    else:
+        print(f"Entropy coef (fixed): {entropy_coef}")
+    print(f"Replay buffer size: {buffer_size} | Batch size: {batch_size}")
+    print(f"Learning starts after: {learning_starts} steps | Train freq: {train_freq} | Gradient steps: {gradient_steps}")
     print(f"Gamma: {gamma}")
-    print(f"Value loss coef: {value_coef}")
     if use_wandb and wandb_run:
         print(f"WandB: {wandb_run.url}")
     print(f"{'=' * 60}\n")
@@ -628,6 +666,11 @@ def train_agent(
         env=env,
         eval_env=eval_env,
         total_timesteps=total_timesteps,
+        replay_buffer=replay_buffer,
+        batch_size=batch_size,
+        learning_starts=learning_starts,
+        train_freq=train_freq,
+        gradient_steps=gradient_steps,
         tensorboard_writer=writer,
         checkpoint_dir=checkpoint_dir,
         model_name=model_name,
@@ -673,9 +716,14 @@ def main():
     )
     parser.add_argument("--load-model", type=str, default=None, help="Path to pre-trained model to continue training")
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate for actor/CNN (default: 1e-4)")
-    parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01)")
+    parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01, only used if --no-auto-entropy-tuning)")
+    parser.add_argument("--no-auto-entropy-tuning", action="store_true", help="Disable automatic entropy tuning (use fixed entropy_coef instead)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
-    parser.add_argument("--value-coef", type=float, default=0.5, help="Weight for critic loss in total loss (default: 0.5)")
+    parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer size (default: 100k)")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for updates (default: 256)")
+    parser.add_argument("--learning-starts", type=int, default=1_000, help="Steps to collect before starting updates (default: 1,000)")
+    parser.add_argument("--train-freq", type=int, default=1, help="Environment steps between training phases (default: 1)")
+    parser.add_argument("--gradient-steps", type=int, default=1, help="Gradient steps per training phase (default: 1)")
     parser.add_argument("--n-stack", type=int, default=4, help="Number of frames to stack (default: 4)")
     parser.add_argument("--input-size", type=int, default=128, help="Input image size (default: 128)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
@@ -726,7 +774,11 @@ def main():
         f.write(f"Learning rate: {args.learning_rate}\n")
         f.write(f"Entropy coef: {args.entropy_coef}\n")
         f.write(f"Gamma: {args.gamma}\n")
-        f.write(f"Value loss coef: {args.value_coef}\n")
+        f.write(f"Buffer size: {args.buffer_size}\n")
+        f.write(f"Batch size: {args.batch_size}\n")
+        f.write(f"Learning starts: {args.learning_starts}\n")
+        f.write(f"Train freq: {args.train_freq}\n")
+        f.write(f"Gradient steps: {args.gradient_steps}\n")
         f.write(f"N stack: {args.n_stack}\n")
         f.write(f"Input size: {args.input_size}\n")
         f.write(f"Seed: {args.seed}\n")
@@ -749,11 +801,15 @@ def main():
         learning_rate=args.learning_rate,
         entropy_coef=args.entropy_coef,
         gamma=args.gamma,
-        value_coef=args.value_coef,
         seed=args.seed,
         load_model_path=args.load_model,
         record_videos=not args.no_videos,
         video_freq=args.video_freq,
+        buffer_size=args.buffer_size,
+        batch_size=args.batch_size,
+        learning_starts=args.learning_starts,
+        train_freq=args.train_freq,
+        gradient_steps=args.gradient_steps,
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_entity=args.wandb_entity,
@@ -761,6 +817,7 @@ def main():
         reduce_action_set=args.reduce_action_set,
         n_stack=args.n_stack,
         input_size=args.input_size,
+        auto_entropy_tuning=not args.no_auto_entropy_tuning,
     )
 
     print(f"\n{'=' * 60}")
