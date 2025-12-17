@@ -12,7 +12,6 @@ import math
 import os
 import pickle
 import random
-import sys
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -32,8 +31,6 @@ from scipy.ndimage import zoom
 from stable_baselines3.common.atari_wrappers import MaxAndSkipEnv, NoopResetEnv
 
 import wandb
-
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "latency_wrap"))
 
 from datetime import datetime
 

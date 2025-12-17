@@ -4,7 +4,7 @@ import time
 
 from agent_dqn import Agent
 from env_physical import PhysicalEnv
-from latency_wrap.wrapper_v0_2 import LatencyModel
+from utils.latency_wrap.wrapper_v0_2 import LatencyModel
 
 
 def build_arg_parser():

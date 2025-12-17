@@ -15,7 +15,6 @@ Flow (sim_lat mode):
 
 import argparse
 import os
-import sys
 from datetime import datetime
 
 import ale_py
@@ -31,8 +30,7 @@ from stable_baselines3.common.vec_env import VecEnvWrapper, VecFrameStack, VecMo
 import wandb
 from wandb.integration.sb3 import WandbCallback
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
-from wrapper_v0_2 import BatchedLatencyModel
+from utils.latency_wrap.wrapper_v0_2 import BatchedLatencyModel
 
 # Register ALE environments
 gym.register_envs(ale_py)

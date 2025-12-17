@@ -2,7 +2,6 @@
 Updated for Gymnasium 1.1.1 API (5-value step, 2-value reset)"""
 
 import os
-import sys
 from collections import deque
 
 import ale_py
@@ -11,16 +10,7 @@ import gymnasium as gym
 import numpy as np
 
 from . import config
-
-# Import latency model for hardware latency simulation
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
-try:
-    from wrapper_v0_2 import LatencyModel
-
-    LATENCY_AVAILABLE = True
-except ImportError:
-    LATENCY_AVAILABLE = False
-    LatencyModel = None
+from utils.latency_wrap.wrapper_v0_2 import LatencyModel
 
 # Register ALE environments
 gym.register_envs(ale_py)
@@ -72,8 +62,6 @@ class LatencyWrapper(gym.Wrapper):
             latency_model_dir: Directory containing the LatencyModel weights
         """
         super().__init__(env)
-        if not LATENCY_AVAILABLE or LatencyModel is None:
-            raise ImportError("LatencyModel not available. Please ensure latency_wrap/wrapper_v0_2.py exists.")
         self.latency_model = LatencyModel(directory_with_weights=latency_model_dir)
         print(f"[LatencyWrapper] Initialized with weights from {latency_model_dir}")
 

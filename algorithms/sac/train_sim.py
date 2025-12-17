@@ -33,8 +33,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import wandb
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
-from wrapper_v0_2 import LatencyModel
+from utils.latency_wrap.wrapper_v0_2 import LatencyModel
 
 sys.path.append(os.path.dirname(__file__))
 from sac import ReplayBuffer, SACAgent

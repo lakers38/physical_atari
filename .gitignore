@@ -38,3 +38,4 @@ uv.lock
 **/.DS_Store
 *.pth
 *.pt
+*.egg-info/
