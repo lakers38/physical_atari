@@ -258,7 +258,7 @@ def test_edge_cases():
         if buffer.size < config.learning_starts:
             print(f"  ✓ Buffer correctly reports size ({buffer.size}) < learning_starts ({config.learning_starts})")
         else:
-            data = buffer.sample_batch()
+            buffer.sample_batch()
             print("  ✗ Sampled from empty buffer (this might be wrong)")
     except Exception as e:
         print(f"  Expected error: {type(e).__name__}: {str(e)[:60]}...")
@@ -277,7 +277,7 @@ def test_edge_cases():
     print(f"  Buffer size: {buffer.size}")
 
     try:
-        data = buffer.sample_batch()
+        buffer.sample_batch()
         print("  ✓ Successfully sampled after adding sufficient data")
     except Exception as e:
         print(f"  ✗ Failed to sample: {type(e).__name__}: {e}")

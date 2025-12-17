@@ -157,7 +157,6 @@ class PriorityTree:
             # Calculate nodes at this level
             level_start = 2**level - 1
             level_end = min(2 ** (level + 1) - 1, len(self.tree))
-            num_nodes = level_end - level_start
 
             # Calculate spacing
             max_width = 80

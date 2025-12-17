@@ -285,7 +285,7 @@ class Agent:
 
         # Get action from SAC policy
         with torch.no_grad():
-            actions, log_probs, entropy, features = self.sac_agent.select_actions(obs_batch)
+            actions, _log_probs, _entropy, _features = self.sac_agent.select_actions(obs_batch)
             action = int(actions[0])
 
         # Store for next update

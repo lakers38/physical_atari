@@ -521,7 +521,7 @@ def main():
             f.write(f"Loaded from: {args.load_model}\n")
 
     # Train agent
-    model, model_path = train_agent(
+    _model, model_path = train_agent(
         env_name=args.env,
         total_timesteps=args.timesteps,
         simulate_latency=(args.mode == "sim_lat"),

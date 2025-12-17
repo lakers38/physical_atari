@@ -1,7 +1,7 @@
 """Neural network model for R2D2"""
 
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -18,7 +18,7 @@ class AgentState:
     action_dim: int
     last_action: torch.Tensor = field(init=False)
     last_reward: torch.Tensor = torch.zeros((1, 1), dtype=torch.float32)
-    hidden_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    hidden_state: Optional[tuple[torch.Tensor, torch.Tensor]] = None
 
     def __post_init__(self):
         self.last_action = torch.zeros((1, self.action_dim), dtype=torch.float32)

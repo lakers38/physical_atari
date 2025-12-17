@@ -11,7 +11,7 @@ Reference: Soft Actor-Critic for Discrete Action Settings (Christodoulou, 2019)
 """
 
 import os
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch
@@ -360,7 +360,7 @@ class SACAgent:
         # Stateless reset (maintained for API compatibility)
         _ = obs_batch
 
-    def _extract_features(self, obs_batch: np.ndarray) -> Tuple[torch.Tensor, np.ndarray]:
+    def _extract_features(self, obs_batch: np.ndarray) -> tuple[torch.Tensor, np.ndarray]:
         assert (
             obs_batch.ndim == 4 and obs_batch.shape[-1] == self.n_stack
         ), f"obs_batch expected shape (*, {self.input_size}, {self.input_size}, {self.n_stack}), got {obs_batch.shape}"
@@ -380,7 +380,7 @@ class SACAgent:
             entropy: Entropy of the policy distribution
             feats_torch: Feature tensor (for later use in update)
         """
-        feats_torch, feats_np = self._extract_features(obs_batch)
+        feats_torch, _feats_np = self._extract_features(obs_batch)
         logits = self._check_finite(self.actor(feats_torch), ctx="logits")
         dist = torch.distributions.Categorical(logits=logits)
         actions = dist.sample()

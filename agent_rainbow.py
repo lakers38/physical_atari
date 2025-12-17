@@ -4,7 +4,7 @@ import math
 import os
 import time
 from collections import deque
-from typing import Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Deque, Optional
 
 from mpmath.libmp.libelefun import atan_taylor_get_cached
 import numpy as np
@@ -99,7 +99,7 @@ class PrioritizedReplay:
         self,
         capacity: int,
         stack_size: int,
-        obs_shape: Tuple[int, int],
+        obs_shape: tuple[int, int],
         alpha: float,
         beta: float,
         beta_increment: float,
@@ -314,7 +314,7 @@ class RainbowCore:
         self.state_stacks = np.zeros((num_envs, stack_size, obs_height, obs_width), dtype=np.uint8)
         self.last_states = np.zeros_like(self.state_stacks)
         self.last_actions = np.full((num_envs,), -1, dtype=np.int64)
-        self.n_step_buffers: List[Deque] = [deque(maxlen=self.n_step) for _ in range(num_envs)]
+        self.n_step_buffers: list[Deque] = [deque(maxlen=self.n_step) for _ in range(num_envs)]
 
         self.frame_count = 0
         self.training_steps = 0

@@ -4,7 +4,7 @@ import argparse
 import importlib
 import os
 import time
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Iterable
 
 import gymnasium as gym
 import numpy as np
@@ -102,7 +102,7 @@ class VecLatencyWrapper(VectorEnvWrapper):
         return self.env.step(delayed)
 
 
-def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
+def parse_agent_spec(agent_spec: str) -> tuple[str, str]:
     if ":" not in agent_spec:
         raise ValueError("Agent spec must be 'module:ClassName'")
     module_name, class_name = agent_spec.split(":", 1)
@@ -119,8 +119,8 @@ def load_agent(agent_spec: str) -> type[VectorAgent]:
     return agent_cls
 
 
-def parse_agent_kwargs(raw_args: Iterable[str]) -> Dict[str, Any]:
-    parsed: Dict[str, Any] = {}
+def parse_agent_kwargs(raw_args: Iterable[str]) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
     for entry in raw_args:
         if "=" not in entry:
             raise ValueError(f"Invalid agent_arg '{entry}' (expected key = value).")

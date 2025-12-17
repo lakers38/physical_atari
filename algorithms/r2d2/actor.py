@@ -2,7 +2,7 @@
 
 import math
 import random
-from typing import Any, Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch
@@ -85,7 +85,7 @@ class LocalBuffer:
         self.sum_reward += reward
         self.size += 1
 
-    def finish(self, last_qval: Optional[np.ndarray] = None) -> Tuple:
+    def finish(self, last_qval: Optional[np.ndarray] = None) -> tuple:
         """
         Finish current block and prepare for replay buffer
 

@@ -128,7 +128,7 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
 
     # Check final policy
     obs_test = _make_obs()
-    features_torch, features_np = agent._extract_features(obs_test[np.newaxis])
+    features_torch, _features_np = agent._extract_features(obs_test[np.newaxis])
     logits = agent.actor(features_torch)
     probs = torch.softmax(logits, dim=-1).detach().cpu().numpy()[0]
 
@@ -156,7 +156,7 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
 
     for t in range(steps):
         # Select action
-        actions, log_probs, entropy, _ = agent.select_actions(obs[np.newaxis])
+        actions, _log_probs, _entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
         action_counts[action] += 1
 
@@ -191,7 +191,7 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
 
     # Check final policy
     obs_test = _make_obs()
-    features_torch, features_np = agent._extract_features(obs_test[np.newaxis])
+    features_torch, _features_np = agent._extract_features(obs_test[np.newaxis])
     logits = agent.actor(features_torch)
     probs = torch.softmax(logits, dim=-1).detach().cpu().numpy()[0]
 
@@ -225,7 +225,7 @@ def test_value_function_learns_returns():
 
     for t in range(steps):
         # Select action
-        actions, log_probs, entropy, _ = agent.select_actions(obs[np.newaxis])
+        actions, _log_probs, _entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
 
         # Deterministic reward
@@ -299,7 +299,7 @@ def test_lifetime_return_error_decreases():
 
     for t in range(steps):
         # Use the actor to stay close to real training flow
-        actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
+        actions, _log_probs, _entropy, _feats = agent.select_actions(obs[np.newaxis])
 
         # Deterministic reward, no terminals
         metrics = agent.update(

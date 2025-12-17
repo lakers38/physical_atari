@@ -30,14 +30,14 @@ def test_environment():
     print(f"  Action space: {env.action_space}")
     print(f"  Action space size: {env.action_space.n}")
 
-    obs, info = env.reset()
+    obs, _info = env.reset()
     print("✓ Reset successful")
     print(f"  Observation shape: {obs.shape}")
     print("  Expected: (1, 84, 84)")
     assert obs.shape == (1, 84, 84), f"Wrong obs shape: {obs.shape}"
 
     action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
+    obs, reward, _terminated, _truncated, _info = env.step(action)
     print("✓ Step successful")
     print(f"  Observation shape: {obs.shape}")
     print(f"  Reward: {reward}")
@@ -198,7 +198,7 @@ def test_full_episode(action_dim):
     print("✓ Environment, model, and buffer created")
 
     # Reset
-    obs, info = env.reset()
+    obs, _info = env.reset()
     buffer.reset(obs)
 
     obs_tensor = torch.from_numpy(obs).unsqueeze(0).float()
@@ -219,7 +219,7 @@ def test_full_episode(action_dim):
         action = q_value.argmax().item()
 
         # Step environment
-        next_obs, reward, terminated, truncated, info = env.step(action)
+        next_obs, reward, terminated, truncated, _info = env.step(action)
         done = terminated or truncated
 
         # Convert hidden for buffer
@@ -244,11 +244,11 @@ def test_full_episode(action_dim):
     print("\n  Testing buffer finish...")
     try:
         if done:
-            block, priorities, episode_reward = buffer.finish(None)
+            block, _priorities, _episode_reward = buffer.finish(None)
         else:
             with torch.no_grad():
                 q_value, hidden = model(agent_state)
-            block, priorities, episode_reward = buffer.finish(q_value.numpy())
+            block, _priorities, _episode_reward = buffer.finish(q_value.numpy())
 
         print("✓ Buffer finish successful")
         print(f"  Block created with {block.num_sequences} sequences")

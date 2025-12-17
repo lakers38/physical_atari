@@ -16,7 +16,7 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Optional
 
 import ale_py  # noqa: F401 - registers ALE envs
 import gymnasium as gym
@@ -653,12 +653,12 @@ class RainbowBackbone(FeatureBackbone):
             return features.squeeze(0).cpu().numpy().astype(np.float32)
 
 
-def dense_to_sparse(feature_vec: np.ndarray) -> List[Tuple[int, float]]:
+def dense_to_sparse(feature_vec: np.ndarray) -> list[tuple[int, float]]:
     flat = feature_vec.flatten()
     return [(int(i), float(v)) for i, v in enumerate(flat)]
 
 
-def _stat_dict(values: List[float], prefix: str) -> Dict[str, float]:
+def _stat_dict(values: list[float], prefix: str) -> dict[str, float]:
     if not values:
         return {
             f"sarsa/{prefix}_mean": 0.0,
@@ -673,9 +673,9 @@ def _stat_dict(values: List[float], prefix: str) -> Dict[str, float]:
     }
 
 
-def collect_swiftsarsa_stats(agent) -> Dict[str, float]:
+def collect_swiftsarsa_stats(agent) -> dict[str, float]:
     """Collect mean/min/max for key SwiftSarsa internal buffers."""
-    stats: Dict[str, float] = {}
+    stats: dict[str, float] = {}
     try:
         stats.update(_stat_dict(agent.algo.get_weights(), "w"))
         stats.update(_stat_dict(agent.algo.get_beta(), "beta"))
@@ -725,7 +725,7 @@ class SwiftSarsaAgent:
         progress = global_step / max(self.cfg.eps_greedy_end_timestamp, 1)
         return self.cfg.eps_greedy_start + progress * (self.cfg.eps_greedy_end - self.cfg.eps_greedy_start)
 
-    def select_action(self, feature_vec: np.ndarray, global_step: int = 0) -> Tuple[int, List[float], float, float]:
+    def select_action(self, feature_vec: np.ndarray, global_step: int = 0) -> tuple[int, list[float], float, float]:
         features = dense_to_sparse(feature_vec)
         values = self.algo.get_action_values(features)
         entropy = 0.0
@@ -881,7 +881,7 @@ def load_agent_state(path: str) -> Optional[Dict]:
         return None
 
 
-def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, args, paths: Dict[str, str]):
+def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, args, paths: dict[str, str]):
     def stack_features(feat_queue: deque) -> np.ndarray:
         """Stack features by concatenation (feature-level stacking)."""
         return np.concatenate(list(feat_queue), axis=0)
@@ -892,7 +892,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
         # Stack along channel dimension to get (H, W, stack_size*C)
         return np.concatenate(list(frame_queue), axis=2)
 
-    obs, info = env.reset(seed=args.seed)
+    obs, _info = env.reset(seed=args.seed)
 
     # Choose stacking mode based on backbone requirements
     if getattr(backbone, 'needs_pixel_stacking', False):
@@ -931,26 +931,23 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
     action, values, entropy, current_eps = agent.select_action(feature, global_step)
     episode_reward = 0.0
     episode_len = 0
-    episode_q_vals: List[float] = []
-    episode_q_taken: List[float] = []
-    episode_feat_norms: List[float] = []
-    episode_entropies: List[float] = []
-    episode_deltas: List[float] = []
-    episode_start_time = time.time()
-    best_reward = -float("inf")
+    episode_q_vals: list[float] = []
+    episode_q_taken: list[float] = []
+    episode_feat_norms: list[float] = []
+    episode_entropies: list[float] = []
+    episode_deltas: list[float] = []
     # Timing stats
     timing_window = deque(maxlen=1000)
     sarsa_timing = deque(maxlen=1000)
     inference_timing = deque(maxlen=1000)
     inference_timing.append(first_inf_time)
-    start_wall = time.time()
 
     logger = []
     wandb_run = init_wandb(args, agent.feature_dim)
 
     while global_step < args.total_frames:
         t0 = time.time()
-        next_obs, reward, terminated, truncated, info = env.step(action)
+        next_obs, reward, terminated, truncated, _info = env.step(action)
         env_step_time = time.time() - t0
         done = terminated or truncated
         episode_reward += reward
@@ -970,14 +967,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
             pass
 
         if done:
-            elapsed = max(time.time() - episode_start_time, 1e-6)
-            fps = episode_len / elapsed
             q_arr = np.array(episode_q_vals, dtype=np.float32) if episode_q_vals else np.array([0.0], dtype=np.float32)
-            feat_arr = (
-                np.array(episode_feat_norms, dtype=np.float32)
-                if episode_feat_norms
-                else np.array([0.0], dtype=np.float32)
-            )
             ent_arr = (
                 np.array(episode_entropies, dtype=np.float32)
                 if episode_entropies
@@ -987,8 +977,6 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
                 np.array(episode_deltas, dtype=np.float32) if episode_deltas else np.array([0.0], dtype=np.float32)
             )
             q_min = float(q_arr.min()) if q_arr.size else 0.0
-            feat_min = float(feat_arr.min()) if feat_arr.size else 0.0
-            feat_max = float(feat_arr.max()) if feat_arr.size else 0.0
             ent_min = float(ent_arr.min()) if ent_arr.size else 0.0
             ent_max = float(ent_arr.max()) if ent_arr.size else 0.0
             delta_min = float(delta_arr.min()) if delta_arr.size else 0.0
@@ -999,10 +987,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
             q_taken_min = float(q_taken.min()) if q_taken.size else 0.0
             q_taken_max = float(q_taken.max()) if q_taken.size else 0.0
             q_taken_mean = float(q_taken.mean()) if q_taken.size else 0.0
-            q_taken_std = float(q_taken.std()) if q_taken.size else 0.0
             avg_env = np.mean(timing_window) if timing_window else 0.0
-            avg_sarsa = np.mean(sarsa_timing) if sarsa_timing else 0.0
-            avg_infer = np.mean(inference_timing) if inference_timing else 0.0
             if wandb_run:
                 wandb_log = {
                     "reward/episode_reward": episode_reward,
@@ -1031,8 +1016,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
             episode_feat_norms.clear()
             episode_entropies.clear()
             episode_deltas.clear()
-            episode_start_time = time.time()
-            next_obs, info = env.reset()
+            next_obs, _info = env.reset()
 
             # Reset based on stacking mode
             if use_pixel_stacking:
@@ -1082,9 +1066,6 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
 
         if global_step % 1000 == 0:
             avg_env = np.mean(timing_window) if timing_window else 0.0
-            avg_sarsa = np.mean(sarsa_timing) if sarsa_timing else 0.0
-            avg_infer = np.mean(inference_timing) if inference_timing else 0.0
-            fps_wall = global_step / max(time.time() - start_wall, 1e-6)
             recent_rewards = [entry[1] for entry in logger[-100:]]
             avg_reward_100 = float(np.mean(recent_rewards)) if recent_rewards else 0.0
             print(

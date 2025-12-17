@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Deque, List, Optional
+from typing import Deque, Optional
 from collections import deque
 
 from agent_utils import preprocess_batch

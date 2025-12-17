@@ -260,15 +260,15 @@ def evaluate_agent(agent: SACAgent, eval_env: gym.Env, n_episodes: int = 10) -> 
     episode_rewards = []
 
     for ep in range(n_episodes):
-        obs, info = eval_env.reset()
+        obs, _info = eval_env.reset()
         agent.start_episodes(obs[np.newaxis])
 
         episode_reward = 0
         done = False
 
         while not done:
-            actions, log_probs, entropy, feats = agent.select_actions(obs[np.newaxis])
-            next_obs, reward, terminated, truncated, info = eval_env.step(actions[0])
+            actions, _log_probs, _entropy, _feats = agent.select_actions(obs[np.newaxis])
+            next_obs, reward, terminated, truncated, _info = eval_env.step(actions[0])
             done = terminated or truncated
             episode_reward += reward
 
@@ -320,7 +320,7 @@ def train_loop(
     recent_alphas = []
 
     # Initialize
-    obs, info = env.reset()
+    obs, _info = env.reset()
     agent.start_episodes(obs[np.newaxis])
 
     start_time = time.time()
@@ -331,7 +331,7 @@ def train_loop(
         action = actions[0]
 
         # Environment step
-        next_obs, reward, terminated, truncated, info = env.step(action)
+        next_obs, reward, terminated, truncated, _info = env.step(action)
         done = terminated or truncated
 
         # Clip reward for stable learning
@@ -390,7 +390,7 @@ def train_loop(
 
             current_episode_reward = 0
             current_episode_length = 0
-            obs, info = env.reset()
+            obs, _info = env.reset()
             agent.reset_done(done, obs[np.newaxis])
             episode_values = []
             episode_rewards_stream = []
@@ -809,7 +809,7 @@ def main():
             f.write(f"Loaded from: {args.load_model}\n")
 
     # Train agent
-    agent, model_path = train_agent(
+    _agent, model_path = train_agent(
         env_name=args.env,
         total_timesteps=args.timesteps,
         simulate_latency=(args.mode == "sim_lat"),

@@ -362,7 +362,7 @@ def main():
         f.write(f"Alpha (epsilon schedule): {r2d2_config.alpha}\n")
 
     # Train agent using distributed multi-actor architecture
-    model, model_path = train_agent_distributed(
+    _model, model_path = train_agent_distributed(
         env_name=args.env,
         total_timesteps=args.timesteps,
         num_actors=args.num_actors,
