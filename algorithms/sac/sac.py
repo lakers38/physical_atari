@@ -18,6 +18,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from framework.Logger import logger
+
 
 class CNNFeatureExtractor(nn.Module):
     """
@@ -41,36 +43,27 @@ class CNNFeatureExtractor(nn.Module):
         self.feature_dim = feature_dim
         self.input_size = input_size
 
-        # Nature DQN convolutional layers
-        # Same architecture works for both 84x84 and 128x128
         self.conv = nn.Sequential(
-            nn.Conv2d(n_stack, 32, kernel_size=8, stride=4),  # 84→20, 128→31
+            nn.Conv2d(n_stack, 32, kernel_size=8, stride=4),
             nn.ReLU(True),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # 20→9, 31→14
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(True),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # 9→7, 14→12
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
             nn.ReLU(True),
             nn.Flatten(),
         )
 
-        # Calculate conv output size
         conv_out_size = self._get_conv_output_size(input_size)
 
-        # Fully connected layer
         self.fc = nn.Sequential(nn.Linear(conv_out_size, feature_dim), nn.ReLU(True))
 
-        # Initialize weights
         self._initialize_weights()
 
     def _get_conv_output_size(self, input_size):
         """Calculate the output size of conv layers."""
-        # Conv1: kernel=8, stride=4, padding=0
         size = (input_size - 8) // 4 + 1
-        # Conv2: kernel=4, stride=2, padding=0
         size = (size - 4) // 2 + 1
-        # Conv3: kernel=3, stride=1, padding=0
         size = (size - 3) // 1 + 1
-        # Output: 64 channels × size × size
         return 64 * size * size
 
     def _initialize_weights(self):
@@ -91,7 +84,6 @@ class CNNFeatureExtractor(nn.Module):
         Returns:
             features: Tensor of shape (batch, feature_dim)
         """
-        # Normalize pixel values to [0, 1]
         if x.dtype == torch.uint8:
             x = x.float() / 255.0
 
@@ -109,28 +101,24 @@ class CNNFeatureExtractor(nn.Module):
         Returns:
             features: Numpy array of shape (feature_dim,) or (batch, feature_dim)
         """
-        # Convert to tensor
         if obs.ndim == 3:
-            obs = obs[np.newaxis, ...]  # Add batch dimension
+            obs = obs[np.newaxis, ...]
             squeeze = True
         else:
             squeeze = False
 
         obs_tensor = torch.from_numpy(obs).float()
 
-        # Move to same device as model
         device = next(self.parameters()).device
         obs_tensor = obs_tensor.to(device)
 
-        # Extract features
         with torch.no_grad():
             features = self.forward(obs_tensor)
 
-        # Convert back to numpy
         features_np = features.cpu().numpy()
 
         if squeeze:
-            features_np = features_np[0]  # Remove batch dimension
+            features_np = features_np[0]
 
         return features_np
 
@@ -158,7 +146,6 @@ class QNetwork(nn.Module):
             nn.Linear(feature_dim, hidden_dim), nn.ReLU(True), nn.Linear(hidden_dim, num_actions)
         )
 
-        # Initialize weights
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -205,7 +192,6 @@ class PolicyNetwork(nn.Module):
             nn.Linear(feature_dim, hidden_dim), nn.ReLU(True), nn.Linear(hidden_dim, num_actions)
         )
 
-        # Initialize weights
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -251,14 +237,14 @@ class SACAgent:
         gamma: float = 0.99,
         learning_rate: float = 1e-4,
         entropy_coef: float = 0.01,
-        tau: float = 0.005,  # Polyak averaging coefficient for target networks
+        tau: float = 0.005,
         fail_on_nonfinite: bool = True,
         auto_entropy_tuning: bool = True,
         target_entropy: Optional[float] = None,
     ):
         self.num_actions = num_actions
         self.device = torch.device(device)
-        print("THE DEVICE IS : ", self.device)
+        logger.info("sac: Using device = %s", self.device)
         self.gamma = gamma
         self.tau = tau
         self.fail_on_nonfinite = fail_on_nonfinite
@@ -266,41 +252,31 @@ class SACAgent:
         self.input_size = input_size
         self.auto_entropy_tuning = auto_entropy_tuning
 
-        # Automatic entropy tuning
         if self.auto_entropy_tuning:
-            # Target entropy: -log(1/|A|) * 0.5 (50% of maximum entropy)
-            # Lower target for online learning stability
             if target_entropy is None:
                 self.target_entropy = -np.log(1.0 / num_actions) * 0.5
-                print(f"SETTING TARGET ENTROPY TO: {self.target_entropy}")
+                logger.info("sac: Setting target entropy = %s", self.target_entropy)
             else:
                 self.target_entropy = target_entropy
 
-            # Use log_alpha for numerical stability (ensures alpha > 0)
-            # Initialize to log(0.2) to start with reasonable alpha
             self.log_alpha = torch.tensor([np.log(0.2)], requires_grad=True, device=self.device, dtype=torch.float32)
             self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=learning_rate)
-            # Keep alpha in a sane range to avoid exploding value targets
             self.min_alpha = 1e-4
             self.max_alpha = 10.0
             self.log_alpha_min = np.log(self.min_alpha)
             self.log_alpha_max = np.log(self.max_alpha)
         else:
-            # Fixed entropy coefficient
             self.entropy_coef = entropy_coef
             self.target_entropy = None
             self.log_alpha = None
             self.alpha_optimizer = None
 
-        # Shared CNN feature extractor
         self.cnn = CNNFeatureExtractor(n_stack=n_stack, feature_dim=feature_dim, input_size=input_size).to(self.device)
 
-        # Policy network (actor)
         self.actor = PolicyNetwork(feature_dim=feature_dim, hidden_dim=actor_hidden_dim, num_actions=num_actions).to(
             self.device
         )
 
-        # Twin Q-networks (critics)
         self.q1 = QNetwork(feature_dim=feature_dim, hidden_dim=value_hidden_dim, num_actions=num_actions).to(
             self.device
         )
@@ -308,7 +284,6 @@ class SACAgent:
             self.device
         )
 
-        # Target Q-networks
         self.q1_target = QNetwork(feature_dim=feature_dim, hidden_dim=value_hidden_dim, num_actions=num_actions).to(
             self.device
         )
@@ -316,17 +291,14 @@ class SACAgent:
             self.device
         )
 
-        # Initialize target networks with same weights
         self.q1_target.load_state_dict(self.q1.state_dict())
         self.q2_target.load_state_dict(self.q2.state_dict())
 
-        # Freeze target networks (no gradient computation)
         for param in self.q1_target.parameters():
             param.requires_grad = False
         for param in self.q2_target.parameters():
             param.requires_grad = False
 
-        # Optimizers
         self.cnn_optimizer = torch.optim.Adam(self.cnn.parameters(), lr=learning_rate)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=learning_rate)
         self.q1_optimizer = torch.optim.Adam(self.q1.parameters(), lr=learning_rate)
@@ -353,11 +325,9 @@ class SACAgent:
             return self.entropy_coef
 
     def start_episodes(self, obs_batch: np.ndarray):
-        # No bootstrapping needed; keep signature for compatibility
         return self._extract_features(obs_batch)
 
     def reset_done(self, done: int, obs_batch: np.ndarray):
-        # Stateless reset (maintained for API compatibility)
         _ = obs_batch
 
     def _extract_features(self, obs_batch: np.ndarray) -> tuple[torch.Tensor, np.ndarray]:
@@ -404,61 +374,45 @@ class SACAgent:
         2. Policy network to maximize Q - α·log(π)
         3. Target networks via Polyak averaging
         """
-        # Extract current features
         current_feats, _ = self._extract_features(obs_batch)
 
-        # Convert inputs to tensors
         actions_t = torch.as_tensor(actions, device=self.device, dtype=torch.long).unsqueeze(1)
         rewards_t = torch.as_tensor(rewards, device=self.device, dtype=torch.float32)
         dones_t = torch.as_tensor(dones, device=self.device, dtype=torch.float32)
 
-        # Get current alpha (entropy coefficient)
         if self.auto_entropy_tuning:
             alpha = self.log_alpha.clamp(self.log_alpha_min, self.log_alpha_max).exp().detach()
         else:
             alpha = self.entropy_coef
 
-        # ===== Compute Q-targets =====
         with torch.no_grad():
-            # Extract features for next state
             next_feats, _ = self._extract_features(next_obs_batch)
 
-            # Get next policy distribution
             next_logits = self.actor(next_feats)
             next_probs = F.softmax(next_logits, dim=-1)
             next_log_probs = F.log_softmax(next_logits, dim=-1)
 
-            # Get target Q-values for all actions
             next_q1_all = self.q1_target(next_feats)
             next_q2_all = self.q2_target(next_feats)
 
-            # Take minimum to reduce overestimation (double Q-learning)
             next_q_all = torch.min(next_q1_all, next_q2_all)
 
-            # Compute V(s') = E_π[Q(s',a) - α·log π(a|s')]
-            # = Σ_a π(a|s') * [Q(s',a) - α·log π(a|s')]
             next_v = (next_probs * (next_q_all - alpha * next_log_probs)).sum(dim=-1)
 
-            # Q-target: r + γ * (1 - done) * V(s')
             q_target = rewards_t + self.gamma * (1 - dones_t) * next_v
 
-        # ===== Update Q-networks =====
-        # Get current Q-values for taken actions
         q1_values = self.q1(current_feats).gather(1, actions_t).squeeze(1)
         q2_values = self.q2(current_feats).gather(1, actions_t).squeeze(1)
 
-        # Q-loss (MSE between Q(s,a) and target)
         q1_loss = F.mse_loss(q1_values, q_target)
         q2_loss = F.mse_loss(q2_values, q_target)
         q_loss = q1_loss + q2_loss
 
-        # Update Q-networks
         self.q1_optimizer.zero_grad()
         self.q2_optimizer.zero_grad()
         self.cnn_optimizer.zero_grad()
         q_loss.backward()
 
-        # Clip gradients
         torch.nn.utils.clip_grad_norm_(self.cnn.parameters(), max_norm=10.0)
         torch.nn.utils.clip_grad_norm_(self.q1.parameters(), max_norm=10.0)
         torch.nn.utils.clip_grad_norm_(self.q2.parameters(), max_norm=10.0)
@@ -467,65 +421,48 @@ class SACAgent:
         self.q1_optimizer.step()
         self.q2_optimizer.step()
 
-        # ===== Update Policy =====
-        # Re-extract features after Q-update (CNN weights changed)
         current_feats_new = self.cnn(
             torch.as_tensor(np.transpose(obs_batch, (0, 3, 1, 2)), device=self.device, dtype=torch.float32) / 255.0
         )
 
-        # Get current policy distribution
-        logits = self.actor(current_feats_new.detach())  # Detach to avoid backprop through Q
+        logits = self.actor(current_feats_new.detach())
         probs = F.softmax(logits, dim=-1)
         log_probs_all = F.log_softmax(logits, dim=-1)
 
-        # Get Q-values for all actions (use minimum of Q1 and Q2)
         with torch.no_grad():
             q1_all = self.q1(current_feats_new)
             q2_all = self.q2(current_feats_new)
             q_all = torch.min(q1_all, q2_all)
 
-        # Policy loss: maximize E_π[Q(s,a) - α·log π(a|s)]
-        # = minimize E_π[α·log π(a|s) - Q(s,a)]
         policy_loss = (probs * (alpha * log_probs_all - q_all)).sum(dim=-1).mean()
 
-        # Update policy
         self.actor_optimizer.zero_grad()
         policy_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=10.0)
         self.actor_optimizer.step()
 
-        # ===== Update entropy coefficient (alpha) =====
         if self.auto_entropy_tuning:
-            # Compute current entropy
             with torch.no_grad():
                 current_entropy = -(probs * log_probs_all).sum(dim=-1).mean()
 
-            # Alpha loss: minimize α * (entropy - target_entropy)
-            # This increases alpha when entropy is too low, decreases when too high
             target_entropy_t = torch.as_tensor(self.target_entropy, device=self.device, dtype=torch.float32)
             alpha_loss = self.log_alpha.clamp(self.log_alpha_min, self.log_alpha_max).exp() * (
                 current_entropy.detach() - target_entropy_t
             )
 
-            # Update alpha
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
             self.alpha_optimizer.step()
-            # Explicitly clamp log_alpha to keep alpha bounded
             self.log_alpha.data.clamp_(self.log_alpha_min, self.log_alpha_max)
         else:
             alpha_loss = torch.tensor(0.0)
 
-        # ===== Update target networks =====
         self._polyak_update(self.q1, self.q1_target)
         self._polyak_update(self.q2, self.q2_target)
 
-        # ===== Compute metrics =====
         with torch.no_grad():
-            # Compute policy entropy
             policy_entropy = -(probs * log_probs_all).sum(dim=-1).mean()
 
-            # Compute advantages for logging
             q_taken = q_all.gather(1, actions_t).squeeze(1)
             advantages = q_target - q_taken
 
@@ -541,7 +478,7 @@ class SACAgent:
             "value_target": float(q_target.mean().item()),
             "policy_entropy": float(policy_entropy.item()),
             "log_prob_mean": float(log_probs_all.mean().item()),
-            "alpha": self.alpha,  # Current entropy coefficient
+            "alpha": self.alpha,
             "alpha_loss": float(alpha_loss.detach().cpu().item()) if self.auto_entropy_tuning else 0.0,
             "target_entropy": self.target_entropy if self.auto_entropy_tuning else None,
         }

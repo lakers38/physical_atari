@@ -39,7 +39,6 @@ from wrapper_v0_2 import LatencyModel
 sys.path.append(os.path.dirname(__file__))
 from sac import ReplayBuffer, SACAgent
 
-# Register ALE environments
 gym.register_envs(ale_py)
 
 
@@ -120,13 +119,11 @@ class ActionSetWrapper(gym.Wrapper):
         if reduce_action_set == 0:
             self.action_mapping = None
         elif reduce_action_set == 2:
-            # ALE action indices: UP=2, DOWN=5, LEFT=4, RIGHT=3
-            self.action_mapping = [2, 5, 4, 3]  # UP, DOWN, LEFT, RIGHT
+            self.action_mapping = [2, 5, 4, 3]
             print(f"[ActionSetWrapper] Restricting {game_name} to 4 directional actions only")
         else:
             self.action_mapping = None
 
-        # Update action space if we have a custom mapping
         if self.action_mapping is not None:
             self.action_space = spaces.Discrete(len(self.action_mapping))
             print(
@@ -134,7 +131,6 @@ class ActionSetWrapper(gym.Wrapper):
             )
 
     def step(self, action):
-        # Map the restricted action to the full action space if needed
         if self.action_mapping is not None:
             action = self.action_mapping[action]
         return self.env.step(action)
@@ -171,16 +167,13 @@ class LatencyWrapper(gym.Wrapper):
         Returns:
             obs, reward, terminated, truncated, info
         """
-        # Convert action to ALE action format and apply latency model
         ale_action = ale_py.Action(int(action))
         delayed_action = self.latency_model.act(ale_action, allowed_actions=self.allowed_actions)
 
-        # Execute the delayed action in the environment
         return self.env.step(int(delayed_action))
 
     def reset(self, **kwargs):
         """Reset the environment and latency model state"""
-        # Reset the latency model's action queue to NOOPs
         self.latency_model.action_queue = []
         for _ in range(30):
             self.latency_model.action_queue.append(self.latency_model._LatencyModel__one_hot_encode(0, 0, 36))
@@ -202,7 +195,6 @@ def create_single_atari_env(
 ):
     """Create single Atari environment with preprocessing and optional latency."""
     # Never override reduce_action_set because of latency; instead, mask latency outputs.
-    # Full action space only when explicitly requested or when we remap to 4-dir set.
     use_full_action_space = reduce_action_set in (0, 2)
 
     env = gym.make(
@@ -212,35 +204,27 @@ def create_single_atari_env(
         full_action_space=use_full_action_space,
     )
 
-    # Allowed actions for latency masking
     allowed_actions = None
     if reduce_action_set == 1:
         allowed_actions = list(range(env.action_space.n))
     elif reduce_action_set == 2:
-        # Map to directional joystick actions (UP, DOWN, LEFT, RIGHT)
         allowed_actions = [2, 5, 4, 3]
 
-    # Standard Atari preprocessing
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
 
-    # Latency wrapper (before action reduction)
     if simulate_latency:
         print(f"[sim_lat] Applying latency simulation to {env_name}")
         env = LatencyWrapper(env, latency_model_dir, allowed_actions=allowed_actions)
 
-    # Action set reduction (still applies even with latency)
     if reduce_action_set == 2:
         env = ActionSetWrapper(env, reduce_action_set, env_name)
 
-    # Preprocessing (grayscale, resize, stack)
     env = PreprocessWrapper(env, frame_size=input_size)
     env = StackFrames(env, num_stack=n_stack)
 
-    # Episode statistics tracking
     env = RecordEpisodeStatistics(env)
 
-    # Video recording (episode-based trigger)
     if video_path:
         print(f"[Video] Recording videos every {video_freq} episodes to {video_path}")
         env = RecordVideo(
@@ -298,17 +282,14 @@ def train_loop(
     wandb_run=None,
 ):
     """Custom training loop for SACAgent."""
-    # Episode tracking
     episode_rewards = []
     episode_lengths = []
     current_episode_reward = 0
     current_episode_length = 0
-    # For lifetime-error style metric: store per-step (value_pred, reward, done flag)
     episode_values = []
     episode_rewards_stream = []
     episode_count = 0
 
-    # Metrics tracking (for logging window)
     recent_advantages = []
     recent_entropies = []
     recent_actor_losses = []
@@ -319,25 +300,20 @@ def train_loop(
     recent_value_next = []
     recent_alphas = []
 
-    # Initialize
     obs, _info = env.reset()
     agent.start_episodes(obs[np.newaxis])
 
     start_time = time.time()
 
     for step in range(total_timesteps):
-        # Select action
         actions, _, _, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
 
-        # Environment step
         next_obs, reward, terminated, truncated, _info = env.step(action)
         done = terminated or truncated
 
-        # Clip reward for stable learning
         reward_clipped = np.clip(reward, -1.0, 1.0)
 
-        # Store transition
         replay_buffer.add(obs, action, reward_clipped, next_obs, done)
 
         metrics = None
@@ -346,7 +322,6 @@ def train_loop(
                 batch = replay_buffer.sample(batch_size)
                 metrics = agent.update(*batch)
 
-                # Track metrics for logging window
                 recent_advantages.append(metrics["advantage"])
                 recent_entropies.append(metrics["policy_entropy"])
                 recent_actor_losses.append(metrics["actor_loss"])
@@ -357,19 +332,16 @@ def train_loop(
                 recent_value_next.append(metrics["value_next"])
                 recent_alphas.append(metrics["alpha"])
 
-        # Track episode stats
         current_episode_reward += reward
         current_episode_length += 1
         if metrics is not None:
             episode_values.append(metrics["value_pred"])
         episode_rewards_stream.append(reward)
 
-        # Handle episode end
         if done:
             episode_rewards.append(current_episode_reward)
             episode_lengths.append(current_episode_length)
 
-            # Compute Monte Carlo returns for this episode to approximate lifetime error
             returns = []
             G = 0.0
             for r in reversed(episode_rewards_stream):
@@ -397,7 +369,6 @@ def train_loop(
         else:
             obs = next_obs
 
-        # Periodic logging
         if step % 1000 == 0 and len(episode_rewards) > 0 and len(recent_advantages) > 0:
             mean_reward = np.mean(episode_rewards[-100:])
             mean_length = np.mean(episode_lengths[-100:])
@@ -405,7 +376,6 @@ def train_loop(
             min_reward = np.min(episode_rewards[-100:]) if len(episode_rewards) > 0 else 0
             fps = step / (time.time() - start_time)
 
-            # Compute metrics over recent window (last 1000 steps)
             mean_advantage = np.mean(recent_advantages[-1000:])
             std_advantage = np.std(recent_advantages[-1000:])
             mean_entropy = np.mean(recent_entropies[-1000:])
@@ -417,7 +387,6 @@ def train_loop(
             mean_value_next = np.mean(recent_value_next[-1000:])
             mean_alpha = np.mean(recent_alphas[-1000:])
 
-            # Console output
             print(
                 f"Step {step:,} | Ep: {episode_count} | "
                 f"Reward: {mean_reward:6.2f} (max:{max_reward:5.1f} min:{min_reward:5.1f}) | "
@@ -431,14 +400,12 @@ def train_loop(
                 f"FPS: {fps:5.1f}"
             )
 
-            # TensorBoard - Episode metrics
             tensorboard_writer.add_scalar("train/mean_reward_100ep", mean_reward, step)
             tensorboard_writer.add_scalar("train/max_reward_100ep", max_reward, step)
             tensorboard_writer.add_scalar("train/min_reward_100ep", min_reward, step)
             tensorboard_writer.add_scalar("train/mean_length_100ep", mean_length, step)
             tensorboard_writer.add_scalar("train/fps", fps, step)
 
-            # TensorBoard - Training metrics
             tensorboard_writer.add_scalar("train/actor_loss", mean_actor_loss, step)
             tensorboard_writer.add_scalar("train/value_loss", mean_value_loss, step)
             tensorboard_writer.add_scalar("train/total_loss", mean_total_loss, step)
@@ -450,7 +417,6 @@ def train_loop(
             tensorboard_writer.add_scalar("train/value_pred_mean", mean_value_pred, step)
             tensorboard_writer.add_scalar("train/value_next_mean", mean_value_next, step)
 
-            # WandB logging mirrors TB when enabled
             if wandb_run is not None:
                 wandb.log(
                     {
@@ -473,13 +439,11 @@ def train_loop(
                     step=step,
                 )
 
-        # Evaluation
         if step % 10000 == 0 and step > 0:
             eval_reward = evaluate_agent(agent, eval_env, n_episodes=10)
             tensorboard_writer.add_scalar("eval/mean_reward", eval_reward, step)
             print(f"  Eval @ {step:,}: {eval_reward:.2f}")
 
-        # Checkpointing
         if step % 50000 == 0 and step > 0:
             checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_{step}")
             agent.save(checkpoint_path)
@@ -551,7 +515,6 @@ def train_agent(
     """
     assert experiment_dir is not None
 
-    # Initialize WandB if requested
     wandb_run = None
     if use_wandb:
         config = {
@@ -576,14 +539,13 @@ def train_agent(
             entity=wandb_entity,
             name=wandb_run_name,
             config=config,
-            sync_tensorboard=True,  # Auto-upload TensorBoard metrics
-            monitor_gym=True,  # Auto-upload videos
+            sync_tensorboard=True,
+            monitor_gym=True,
             save_code=True,
         )
         print(f"[WandB] Initialized run: {wandb_run.name}")
         print(f"[WandB] View at: {wandb_run.url}")
 
-    # Create environments
     video_path = os.path.join(experiment_dir, "videos") if record_videos else None
 
     env = create_single_atari_env(
@@ -610,7 +572,6 @@ def train_agent(
         video_freq=0,
     )
 
-    # Create agent
     agent = SACAgent(
         num_actions=env.action_space.n,
         feature_dim=512,
@@ -629,17 +590,14 @@ def train_agent(
         print(f"Loading pre-trained model from {load_model_path}")
         agent.load(load_model_path)
 
-    # Replay buffer for off-policy updates
     replay_buffer = ReplayBuffer(
         capacity=buffer_size,
         obs_shape=(input_size, input_size, n_stack),
     )
 
-    # TensorBoard
     tensorboard_log_dir = os.path.join(experiment_dir, "logs", "tensorboard")
     writer = SummaryWriter(log_dir=tensorboard_log_dir)
 
-    # Training
     checkpoint_dir = os.path.join(experiment_dir, "models", "checkpoints")
     model_name = f"SAC_{env_name.replace('/', '_')}"
 
@@ -680,7 +638,6 @@ def train_agent(
         wandb_run=wandb_run,
     )
 
-    # Save final model
     final_path = os.path.join(experiment_dir, "models", "final_model")
     agent.save(final_path)
     print(f"\nTraining complete! Model saved to: {final_path}")
@@ -689,7 +646,6 @@ def train_agent(
     env.close()
     eval_env.close()
 
-    # Finish WandB run
     if use_wandb and wandb_run is not None:
         wandb_run.finish()
         print("[WandB] Run finished and uploaded")
@@ -763,21 +719,17 @@ def main():
     )
     args = parser.parse_args()
 
-    # Generate run name (mode-name-timestamp)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{timestamp}-sac-{args.mode}-{generate_slug(2)}"
 
-    # Create experiment directory using run_name
     env_dir_name = args.env.replace('/', '_')
     experiment_dir = os.path.join(args.output_dir, args.mode, env_dir_name, run_name)
 
-    # Create directory structure
     os.makedirs(os.path.join(experiment_dir, "logs", "tensorboard"), exist_ok=True)
     os.makedirs(os.path.join(experiment_dir, "models", "checkpoints"), exist_ok=True)
     if not args.no_videos:
         os.makedirs(os.path.join(experiment_dir, "videos"), exist_ok=True)
 
-    # Save configuration
     config_path = os.path.join(experiment_dir, "config.txt")
     with open(config_path, "w") as f:
         f.write(f"Run name: {run_name}\n")
@@ -808,7 +760,6 @@ def main():
             f.write("\n# Model Loading\n")
             f.write(f"Loaded from: {args.load_model}\n")
 
-    # Train agent
     _agent, model_path = train_agent(
         env_name=args.env,
         total_timesteps=args.timesteps,

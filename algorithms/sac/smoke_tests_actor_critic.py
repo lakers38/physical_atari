@@ -10,12 +10,10 @@ import sys
 import numpy as np
 import torch
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(__file__))
 
 from agent_actor_critic import SACAgent
 
-# Import pytest only if available (for running via pytest)
 try:
     import pytest
 
@@ -23,7 +21,6 @@ try:
 except ImportError:
     PYTEST_AVAILABLE = False
 
-    # Create dummy pytest decorator for standalone execution
     class DummyMark:
         @staticmethod
         def parametrize(*args, **kwargs):
@@ -45,12 +42,12 @@ def _make_agent(overrides=None):
         feature_dim=512,
         actor_hidden_dim=256,
         value_hidden_dim=256,
-        n_stack=4,  # Single frame for testing
+        n_stack=4,
         input_size=128,
         device='cpu',
-        gamma=0.0,  # Bandit-style (no discounting)
-        learning_rate=1e-3,  # High LR for fast convergence
-        entropy_coef=0.1,  # Higher entropy for exploration in tests
+        gamma=0.0,
+        learning_rate=1e-3,
+        entropy_coef=0.1,
         value_coef=0.5,
     )
 
@@ -61,7 +58,6 @@ def _make_agent(overrides=None):
     return agent
 
 
-# Cache a single observation for bandit-style tests (same state every time)
 _CACHED_OBS = None
 
 
@@ -69,9 +65,6 @@ def _make_obs():
     """Create a dummy observation (128x128x1 single grayscale frame)."""
     global _CACHED_OBS
     if _CACHED_OBS is None:
-        # Create a fixed non-zero observation for bandit tests
-        # (all-zero observations lead to all-zero features, breaking learning)
-        # Use a simple pattern so features are non-zero but consistent
         _CACHED_OBS = np.ones((128, 128, 4), dtype=np.uint8) * 128
     return _CACHED_OBS.copy()
 
@@ -92,25 +85,20 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
 
     obs = _make_obs()
 
-    # Initialize episode
     agent.start_episodes(obs[np.newaxis])
 
     for t in range(steps):
-        # Select action for current step
         actions, log_probs, entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
         action_counts[action] += 1
 
-        # Compute reward based on current action
         reward = 0.0
         if action == target_action and np.random.rand() < reward_prob:
             reward = 1.0
 
-        # Next observation (same in bandit setting)
         next_obs = _make_obs()
         done = False
 
-        # Update agent
         agent.update(
             obs[np.newaxis],
             actions,
@@ -126,7 +114,6 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
                 f"Step {t}: action={action}, reward={reward:.1f}, counts={action_counts}, entropy={entropy.item():.3f}, log_probs={log_probs.item():.3f}"
             )
 
-    # Check final policy
     obs_test = _make_obs()
     features_torch, _features_np = agent._extract_features(obs_test[np.newaxis])
     logits = agent.actor(features_torch)
@@ -155,23 +142,18 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
     agent.start_episodes(obs[np.newaxis])
 
     for t in range(steps):
-        # Select action
         actions, _log_probs, _entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
         action_counts[action] += 1
 
-        # Compute reward
         reward = 0.0
         if action == target_action and np.random.rand() < reward_prob:
             reward = 1.0
 
-        # Terminal every N steps
         done = (t + 1) % life_loss_every == 0
 
-        # Next observation
         next_obs = _make_obs()
 
-        # Update agent
         agent.update(
             obs[np.newaxis],
             actions,
@@ -180,7 +162,6 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
             [done],
         )
 
-        # Reset on terminal
         if done:
             agent.reset_done(done, next_obs[np.newaxis])
 
@@ -189,7 +170,6 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
         if t % 32 == 0:
             print(f"Step {t}: action={action}, reward={reward:.1f}, " f"done={done}, counts={action_counts}")
 
-    # Check final policy
     obs_test = _make_obs()
     features_torch, _features_np = agent._extract_features(obs_test[np.newaxis])
     logits = agent.actor(features_torch)
@@ -224,21 +204,17 @@ def test_value_function_learns_returns():
     recent_advantages = []
 
     for t in range(steps):
-        # Select action
         actions, _log_probs, _entropy, _ = agent.select_actions(obs[np.newaxis])
         action = actions[0]
 
-        # Deterministic reward
         reward = 1.0 if action == target_action else 0.0
 
         with torch.no_grad():
-            v_pred = agent.value_head(feats).mean().item()  # Current critic prediction before update
+            v_pred = agent.value_head(feats).mean().item()
 
-        # Next observation
         next_obs = _make_obs()
         done = False
 
-        # Update agent and track advantage
         metrics = agent.update(
             obs[np.newaxis],
             actions,
@@ -263,7 +239,6 @@ def test_value_function_learns_returns():
                 f"recent_adv_mean={recent_mean:.3f}±{recent_std:.3f}"
             )
 
-    # Check that advantages are trending toward zero (value function learning)
     early_advantages = advantages[:50]
     late_advantages = advantages[-50:]
 
@@ -274,7 +249,6 @@ def test_value_function_learns_returns():
     print(f"Late advantage magnitude: {late_mean_abs:.3f}")
     print(f"Improvement: {early_mean_abs - late_mean_abs:.3f}")
 
-    # Value function should improve (advantages should decrease in magnitude)
     assert (
         late_mean_abs < early_mean_abs
     ), f"Value function should learn: late advantages ({late_mean_abs:.3f}) should be smaller than early ({early_mean_abs:.3f})"
@@ -293,15 +267,13 @@ def test_lifetime_return_error_decreases():
     obs = _make_obs()
     agent.start_episodes(obs[np.newaxis])
 
-    true_return = 1.0  # With gamma=0 the return is the immediate reward
+    true_return = 1.0
     steps = 256
     errors = []
 
     for t in range(steps):
-        # Use the actor to stay close to real training flow
         actions, _log_probs, _entropy, _feats = agent.select_actions(obs[np.newaxis])
 
-        # Deterministic reward, no terminals
         metrics = agent.update(
             obs[np.newaxis],
             actions,
@@ -310,7 +282,6 @@ def test_lifetime_return_error_decreases():
             [False],
         )
 
-        # Lifetime error proxy: squared error of current value prediction
         errors.append((true_return - metrics["value_pred"]) ** 2)
 
         if t % 64 == 0:
@@ -329,7 +300,6 @@ def test_lifetime_return_error_decreases():
 
 
 if __name__ == "__main__":
-    # Run tests manually
     print("=" * 60)
     print("Running Smoke Tests for Soft Actor-Critic Agent")
     print("=" * 60)
