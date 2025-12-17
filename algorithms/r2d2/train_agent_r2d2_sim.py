@@ -20,10 +20,9 @@ from coolname import generate_slug
 import wandb
 
 
-# Import R2D2 components
-# Note: Using absolute imports since this is run as a script
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(__file__))
 from model import Network
 import config as r2d2_config
@@ -34,6 +33,7 @@ from environment import create_env
 
 # Register ALE environments
 gym.register_envs(ale_py)
+
 
 def load_checkpoint(checkpoint_path, model, device='cpu'):
     """
@@ -62,11 +62,7 @@ def load_checkpoint(checkpoint_path, model, device='cpu'):
         print(f"  - num_updates: {num_updates}")
         print(f"  - env_steps: {env_steps}")
         print(f"  - training_time: {training_time:.2f} minutes")
-        return {
-            'num_updates': num_updates,
-            'env_steps': env_steps,
-            'training_time_minutes': training_time
-        }
+        return {'num_updates': num_updates, 'env_steps': env_steps, 'training_time_minutes': training_time}
     elif isinstance(checkpoint, dict):
         # New format: dictionary with keys
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -96,7 +92,7 @@ def train_agent_distributed(
     seed,
     simulate_latency=False,
     latency_model_dir="./latency_wrap",
-    load_model_path=None
+    load_model_path=None,
 ):
     """
     Train R2D2 agent using distributed multi-actor architecture
@@ -172,7 +168,7 @@ def train_agent_distributed(
                 'alpha': r2d2_config.alpha,
                 'hidden_dim': r2d2_config.hidden_dim,
                 'target_net_update_interval': r2d2_config.target_net_update_interval,
-            }
+            },
         )
         print(f"✓ WandB initialized (project: {wandb_project}, run: {wandb_run_name})\n")
 
@@ -202,22 +198,14 @@ def train_agent_distributed(
     # Formula: eps = base_eps ** (1 + (i / (num_actors - 1)) * alpha)
     base_eps = r2d2_config.base_explore_eps
     alpha = r2d2_config.alpha
-    epsilons = [
-        base_eps ** (
-            1 + (i / (num_actors - 1) * alpha if num_actors > 1 else 0)
-        )
-        for i in range(num_actors)
-    ]
+    epsilons = [base_eps ** (1 + (i / (num_actors - 1) * alpha if num_actors > 1 else 0)) for i in range(num_actors)]
 
     print(f"Actor eps (exploration) values: {[f'{eps:.3f}' for eps in epsilons]}")
 
     # Create environment factory function
     def env_factory():
         return create_env(
-            env_name=env_name,
-            noop_start=True,
-            simulate_latency=simulate_latency,
-            latency_model_dir=latency_model_dir
+            env_name=env_name, noop_start=True, simulate_latency=simulate_latency, latency_model_dir=latency_model_dir
         )
 
     # Create ReplayBuffer
@@ -227,7 +215,7 @@ def train_agent_distributed(
         priority_queue=priority_queue,
         stats_queue=stats_queue,
         buffer_capacity=r2d2_config.buffer_capacity,
-        batch_size=r2d2_config.batch_size
+        batch_size=r2d2_config.batch_size,
     )
 
     # Create Learner
@@ -242,18 +230,13 @@ def train_agent_distributed(
         use_wandb=use_wandb,
         env_name=env_name,
         video_dir=video_dir,
-        initial_num_updates=initial_num_updates
+        initial_num_updates=initial_num_updates,
     )
 
     # Create Actors
     actors = []
     for i in range(num_actors):
-        actor = Actor(
-            epsilon=epsilons[i],
-            model=shared_model,
-            sample_queue=sample_queue_list[i],
-            env_fn=env_factory
-        )
+        actor = Actor(epsilon=epsilons[i], model=shared_model, sample_queue=sample_queue_list[i], env_fn=env_factory)
         actors.append(actor)
 
     # Start all processes
@@ -303,81 +286,43 @@ def train_agent_distributed(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Train R2D2 agent using distributed multi-actor architecture"
+    parser = argparse.ArgumentParser(description="Train R2D2 agent using distributed multi-actor architecture")
+    parser.add_argument(
+        "--env", type=str, default=r2d2_config.game_name, help="Atari environment name (default: ALE/MsPacman-v5)"
     )
     parser.add_argument(
-        "--env",
-        type=str,
-        default=r2d2_config.game_name,
-        help="Atari environment name (default: ALE/MsPacman-v5)"
+        "--timesteps", type=int, default=r2d2_config.training_steps, help="Total training timesteps (default: 1M)"
     )
     parser.add_argument(
-        "--timesteps",
-        type=int,
-        default=r2d2_config.training_steps,
-        help="Total training timesteps (default: 1M)"
+        "--num-actors", type=int, default=r2d2_config.num_actors, help="Number of parallel actors (default: 8)"
     )
+    parser.add_argument("--output-dir", type=str, default="outputs/r2d2", help="Base directory for outputs")
     parser.add_argument(
-        "--num-actors",
-        type=int,
-        default=r2d2_config.num_actors,
-        help="Number of parallel actors (default: 8)"
+        "--device", type=str, default="cuda", choices=["cuda", "cpu", "mps"], help="Device to use for training"
     )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="outputs/r2d2",
-        help="Base directory for outputs"
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda",
-        choices=["cuda", "cpu", "mps"],
-        help="Device to use for training"
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Random seed (default: 0)"
-    )
+    parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
     parser.add_argument(
         "--mode",
         type=str,
         default="sim",
         choices=["sim", "sim_lat"],
-        help="Training mode: sim (no latency) or sim_lat (with LatencyModel)"
+        help="Training mode: sim (no latency) or sim_lat (with LatencyModel)",
     )
     parser.add_argument(
         "--latency-model-dir",
         type=str,
         default="./latency_wrap",
-        help="Directory containing LatencyModel weights (default: ./latency_wrap)"
+        help="Directory containing LatencyModel weights (default: ./latency_wrap)",
     )
     parser.add_argument(
-        "--load-model",
-        type=str,
-        default=None,
-        help="Path to pre-trained model checkpoint to resume training"
+        "--load-model", type=str, default=None, help="Path to pre-trained model checkpoint to resume training"
+    )
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument(
+        "--wandb-project", type=str, default="physical-atari", help="WandB project name (default: physical-atari)"
     )
     parser.add_argument(
-        "--wandb",
-        action="store_true",
-        help="Enable Weights & Biases logging"
-    )
-    parser.add_argument(
-        "--wandb-project",
-        type=str,
-        default="physical-atari",
-        help="WandB project name (default: physical-atari)"
-    )
-    parser.add_argument(
-        "--wandb-entity",
-        type=str,
-        default=None,
-        help="WandB entity/team name (default: your username)"
+        "--wandb-entity", type=str, default=None, help="WandB entity/team name (default: your username)"
     )
     args = parser.parse_args()
 
@@ -432,7 +377,7 @@ def main():
         seed=args.seed,
         simulate_latency=(args.mode == "sim_lat"),
         latency_model_dir=args.latency_model_dir,
-        load_model_path=args.load_model
+        load_model_path=args.load_model,
     )
 
     print(f"\n{'='*60}")

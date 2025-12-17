@@ -48,7 +48,9 @@ class Agent:
         self.use_grayscale = kwargs.get('use_grayscale', True)
 
         # Training settings
-        self.update_freq = kwargs.get('update_freq', 1)  # Gradient step cadence (every frame_skip * update_freq env frames)
+        self.update_freq = kwargs.get(
+            'update_freq', 1
+        )  # Gradient step cadence (every frame_skip * update_freq env frames)
         self.batch_size = kwargs.get('batch_size', 64)
         self.buffer_size = kwargs.get('buffer_size', 100_000)
         self.learning_starts = kwargs.get('learning_starts', 10_000)
@@ -114,10 +116,8 @@ class Agent:
             self.sac_agent.actor.eval()
             logger.info(f"agent_sac: Running in EVALUATION MODE (training disabled)")
         else:
-            
             self.sac_agent.cnn.train()
             self.sac_agent.actor.train()
-            
 
         # Frame buffering (stack n_stack frames)
         self.frame_buffer = deque(maxlen=self.n_stack)
@@ -151,8 +151,9 @@ class Agent:
 
     def preprocess_frame(self, observation_rgb8):
         """Preprocess single frame: resize and optionally convert to grayscale"""
-        assert observation_rgb8.shape == EXPECTED_OBS_DIMS, \
-            f"Observation Shape is: {observation_rgb8.shape}, but we expected: {EXPECTED_OBS_DIMS}"
+        assert (
+            observation_rgb8.shape == EXPECTED_OBS_DIMS
+        ), f"Observation Shape is: {observation_rgb8.shape}, but we expected: {EXPECTED_OBS_DIMS}"
 
         if self.use_grayscale:
             # Convert to grayscale
@@ -186,12 +187,15 @@ class Agent:
         # Handle episode end
         if end_of_episode > 0:
             if self.use_wandb:
-                wandb.log({
-                    "episode/end_reason": end_of_episode,
-                    "episode/total_frames": self.step_count,
-                    "episode/reward": self.episode_reward,
-                    "episode/length": self.episode_length,
-                }, step=self.step_count)
+                wandb.log(
+                    {
+                        "episode/end_reason": end_of_episode,
+                        "episode/total_frames": self.step_count,
+                        "episode/reward": self.episode_reward,
+                        "episode/length": self.episode_length,
+                    },
+                    step=self.step_count,
+                )
 
             self.frame_buffer.clear()
             self.last_obs = None
@@ -259,19 +263,22 @@ class Agent:
                             self.train_losses.append(metrics['total_loss'])
 
                             if self.use_wandb and self.training_step % 10 == 0:
-                                wandb.log({
-                                    "train/total_loss": metrics['total_loss'],
-                                    "train/actor_loss": metrics['actor_loss'],
-                                    "train/value_loss": metrics['value_loss'],
-                                    "train/advantage": metrics['advantage'],
-                                    "train/value_pred": metrics['value_pred'],
-                                    "train/value_next": metrics['value_next'],
-                                    "train/value_target": metrics['value_target'],
-                                    "train/policy_entropy": metrics['policy_entropy'],
-                                    "train/alpha": metrics['alpha'],
-                                    "train/alpha_loss": metrics['alpha_loss'],
-                                    "train/training_step": self.training_step,
-                                }, step=self.step_count)
+                                wandb.log(
+                                    {
+                                        "train/total_loss": metrics['total_loss'],
+                                        "train/actor_loss": metrics['actor_loss'],
+                                        "train/value_loss": metrics['value_loss'],
+                                        "train/advantage": metrics['advantage'],
+                                        "train/value_pred": metrics['value_pred'],
+                                        "train/value_next": metrics['value_next'],
+                                        "train/value_target": metrics['value_target'],
+                                        "train/policy_entropy": metrics['policy_entropy'],
+                                        "train/alpha": metrics['alpha'],
+                                        "train/alpha_loss": metrics['alpha_loss'],
+                                        "train/training_step": self.training_step,
+                                    },
+                                    step=self.step_count,
+                                )
                 except Exception as e:
                     logger.error(f"agent_sac: Training error at step {self.step_count}: {e}")
                     # Continue with action selection even if training fails

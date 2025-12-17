@@ -1,5 +1,6 @@
-'''Gymnasium environment wrapper for R2D2.
-Updated for Gymnasium 1.1.1 API (5-value step, 2-value reset)'''
+"""Gymnasium environment wrapper for R2D2.
+Updated for Gymnasium 1.1.1 API (5-value step, 2-value reset)"""
+
 import os
 import sys
 import gymnasium as gym
@@ -13,6 +14,7 @@ from . import config
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
 try:
     from wrapper_v0_2 import LatencyModel
+
     LATENCY_AVAILABLE = True
 except ImportError:
     LATENCY_AVAILABLE = False
@@ -20,6 +22,7 @@ except ImportError:
 
 # Register ALE environments
 gym.register_envs(ale_py)
+
 
 class NoopResetEnv(gym.Wrapper):
     def __init__(self, env, noop_max=30):
@@ -33,12 +36,12 @@ class NoopResetEnv(gym.Wrapper):
         assert env.unwrapped.get_action_meanings()[0] == 'NOOP'
 
     def reset(self, **kwargs):
-        """ Do no-op action for a number of steps in [1, noop_max]."""
+        """Do no-op action for a number of steps in [1, noop_max]."""
         obs, info = self.env.reset(**kwargs)
         if self.override_num_noops is not None:
             noops = self.override_num_noops
         else:
-            noops = np.random.randint(1, self.noop_max + 1) #pylint: disable=E1101
+            noops = np.random.randint(1, self.noop_max + 1)  # pylint: disable=E1101
         assert noops > 0
         for _ in range(noops):
             obs, _, terminated, truncated, info = self.env.step(self.noop_action)
@@ -68,9 +71,7 @@ class LatencyWrapper(gym.Wrapper):
         """
         super().__init__(env)
         if not LATENCY_AVAILABLE or LatencyModel is None:
-            raise ImportError(
-                "LatencyModel not available. Please ensure latency_wrap/wrapper_v0_2.py exists."
-            )
+            raise ImportError("LatencyModel not available. Please ensure latency_wrap/wrapper_v0_2.py exists.")
         self.latency_model = LatencyModel(directory_with_weights=latency_model_dir)
         print(f"[LatencyWrapper] Initialized with weights from {latency_model_dir}")
 
@@ -96,9 +97,7 @@ class LatencyWrapper(gym.Wrapper):
         # Reset the latency model's action queue to NOOPs
         self.latency_model.action_queue = []
         for _ in range(30):
-            self.latency_model.action_queue.append(
-                self.latency_model._LatencyModel__one_hot_encode(0, 0, 36)
-            )
+            self.latency_model.action_queue.append(self.latency_model._LatencyModel__one_hot_encode(0, 0, 36))
         self.latency_model.last_action = 0
 
         return self.env.reset(**kwargs)
@@ -123,9 +122,7 @@ class WarpFrame(gym.ObservationWrapper):
 
     def observation(self, obs):
         # Resize to 84x84
-        obs = cv2.resize(
-            obs, (self._width, self._height), interpolation=cv2.INTER_AREA
-        )
+        obs = cv2.resize(obs, (self._width, self._height), interpolation=cv2.INTER_AREA)
         # Return without adding channel dimension - FrameStack will handle stacking
         return obs
 
@@ -137,6 +134,7 @@ class FrameStack(gym.Wrapper):
     This provides temporal information by stacking recent frames.
     Output shape: (n_frames, height, width) e.g., (4, 84, 84)
     """
+
     def __init__(self, env, n_frames=4):
         """
         Args:
@@ -153,7 +151,7 @@ class FrameStack(gym.Wrapper):
             low=0,
             high=255,
             shape=(n_frames, *shape),  # (4, 84, 84)
-            dtype=np.uint8
+            dtype=np.uint8,
         )
 
     def reset(self, **kwargs):
@@ -175,8 +173,13 @@ class FrameStack(gym.Wrapper):
         return np.stack(self.frames, axis=0)
 
 
-def create_env(env_name=config.game_name, noop_start=True, render_mode=None,
-               simulate_latency=False, latency_model_dir="./latency_wrap"):
+def create_env(
+    env_name=config.game_name,
+    noop_start=True,
+    render_mode=None,
+    simulate_latency=False,
+    latency_model_dir="./latency_wrap",
+):
     """
     Create Atari environment with preprocessing and optional latency simulation.
 
@@ -196,7 +199,7 @@ def create_env(env_name=config.game_name, noop_start=True, render_mode=None,
         frameskip=4,
         repeat_action_probability=0,
         full_action_space=True,
-        render_mode=render_mode
+        render_mode=render_mode,
     )
 
     # Apply latency wrapper BEFORE other wrappers if requested

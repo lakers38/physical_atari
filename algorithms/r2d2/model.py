@@ -11,6 +11,7 @@ from . import config
 @dataclass
 class AgentState:
     """State of the agent including observation, last action, last reward, and LSTM hidden state"""
+
     obs: torch.Tensor
     action_dim: int
     last_action: torch.Tensor = field(init=False)
@@ -70,15 +71,11 @@ class Network(nn.Module):
 
         # Dueling DQN head
         self.advantage = nn.Sequential(
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(self.hidden_dim, self.action_dim)
+            nn.Linear(self.hidden_dim, self.hidden_dim), nn.ReLU(True), nn.Linear(self.hidden_dim, self.action_dim)
         )
 
         self.value = nn.Sequential(
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(self.hidden_dim, 1)
+            nn.Linear(self.hidden_dim, self.hidden_dim), nn.ReLU(True), nn.Linear(self.hidden_dim, 1)
         )
 
     def forward(self, state: AgentState):
@@ -146,10 +143,12 @@ class Network(nn.Module):
         forward_pad_steps = torch.minimum(self.max_forward_steps - forward_steps, learning_steps)
 
         hidden = []
-        for hidden_seq, start_idx, end_idx, padding_length in zip(recurrent_output, seq_start_idx, seq_len, forward_pad_steps):
+        for hidden_seq, start_idx, end_idx, padding_length in zip(
+            recurrent_output, seq_start_idx, seq_len, forward_pad_steps
+        ):
             hidden.append(hidden_seq[start_idx:end_idx])
             if padding_length > 0:
-                hidden.append(hidden_seq[end_idx-1:end_idx].repeat(padding_length, 1))
+                hidden.append(hidden_seq[end_idx - 1 : end_idx].repeat(padding_length, 1))
 
         hidden = torch.cat(hidden)
 
@@ -194,7 +193,13 @@ class Network(nn.Module):
 
         recurrent_output, _ = pad_packed_sequence(recurrent_output, batch_first=True)
 
-        hidden = torch.cat([output[burn_in:burn_in+learning] for output, burn_in, learning in zip(recurrent_output, burn_in_steps, learning_steps)], dim=0)
+        hidden = torch.cat(
+            [
+                output[burn_in : burn_in + learning]
+                for output, burn_in, learning in zip(recurrent_output, burn_in_steps, learning_steps)
+            ],
+            dim=0,
+        )
 
         adv = self.advantage(hidden)
         val = self.value(hidden)

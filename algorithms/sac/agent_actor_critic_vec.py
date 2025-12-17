@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from typing import Tuple, List
 import os
 
+
 class CNNFeatureExtractor(nn.Module):
     """
     CNN feature extractor based on Nature DQN architecture.
@@ -38,21 +39,18 @@ class CNNFeatureExtractor(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(n_stack, 32, kernel_size=8, stride=4),  # 84→20, 128→31
             nn.ReLU(True),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),       # 20→9, 31→14
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # 20→9, 31→14
             nn.ReLU(True),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),       # 9→7, 14→12
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # 9→7, 14→12
             nn.ReLU(True),
-            nn.Flatten()
+            nn.Flatten(),
         )
 
         # Calculate conv output size
         conv_out_size = self._get_conv_output_size(input_size)
 
         # Fully connected layer
-        self.fc = nn.Sequential(
-            nn.Linear(conv_out_size, feature_dim),
-            nn.ReLU(True)
-        )
+        self.fc = nn.Sequential(nn.Linear(conv_out_size, feature_dim), nn.ReLU(True))
 
         # Initialize weights
         self._initialize_weights()
@@ -129,6 +127,7 @@ class CNNFeatureExtractor(nn.Module):
 
         return features_np
 
+
 class PolicyHead(nn.Module):
     """
     Policy network (actor) for action selection.
@@ -149,9 +148,7 @@ class PolicyHead(nn.Module):
         self.num_actions = num_actions
 
         self.network = nn.Sequential(
-            nn.Linear(feature_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, num_actions)
+            nn.Linear(feature_dim, hidden_dim), nn.ReLU(True), nn.Linear(hidden_dim, num_actions)
         )
 
         # Initialize weights
@@ -176,6 +173,7 @@ class PolicyHead(nn.Module):
             logits: Tensor of shape (batch, num_actions)
         """
         return self.network(features)
+
 
 class SACAgent:
     """
@@ -209,9 +207,7 @@ class SACAgent:
         self.n_stack = n_stack
         self.input_size = input_size
 
-        self.cnn = CNNFeatureExtractor(n_stack=n_stack, feature_dim=feature_dim, input_size=input_size).to(
-            self.device
-        )
+        self.cnn = CNNFeatureExtractor(n_stack=n_stack, feature_dim=feature_dim, input_size=input_size).to(self.device)
         self.actor = PolicyHead(feature_dim=feature_dim, hidden_dim=actor_hidden_dim, num_actions=num_actions).to(
             self.device
         )
@@ -280,7 +276,9 @@ class SACAgent:
 
         value_loss = F.mse_loss(value_pred, target)
         advantages = (target - value_pred).detach()
-        actor_loss = -(log_probs.to(self.device) * advantages).mean() - self.entropy_coef * entropy.to(self.device).mean()
+        actor_loss = (
+            -(log_probs.to(self.device) * advantages).mean() - self.entropy_coef * entropy.to(self.device).mean()
+        )
         total_loss = actor_loss + self.value_coef * value_loss
 
         self.optimizer.zero_grad()

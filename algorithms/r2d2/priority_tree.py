@@ -1,4 +1,3 @@
-
 """Priority tree (sum tree) for prioritized experience replay"""
 
 import numpy as np
@@ -71,6 +70,7 @@ class PriorityTree:
 
         # Vectorized tree traversal
         import math
+
         num_layers = int(math.log2(self.capacity)) + 1
         idxes = np.zeros(batch_size, dtype=np.int64)
 
@@ -89,7 +89,7 @@ class PriorityTree:
         idxes = idxes - (self.capacity - 1)
 
         # Calculate importance sampling weights
-        min_priority = np.min(self.tree[self.capacity-1:self.capacity-1+self.size])
+        min_priority = np.min(self.tree[self.capacity - 1 : self.capacity - 1 + self.size])
 
         # Simplified IS weight formula: (p_i / min_p)^(-beta)
         # Add epsilon to prevent division by zero
@@ -156,7 +156,7 @@ class PriorityTree:
         for level in range(depth):
             # Calculate nodes at this level
             level_start = 2**level - 1
-            level_end = min(2**(level+1) - 1, len(self.tree))
+            level_end = min(2 ** (level + 1) - 1, len(self.tree))
             num_nodes = level_end - level_start
 
             # Calculate spacing

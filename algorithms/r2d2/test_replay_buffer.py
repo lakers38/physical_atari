@@ -15,22 +15,27 @@ sys.path.insert(0, os.path.dirname(__file__))
 from r2d2.replay_buffer import ReplayBuffer, Block
 from r2d2 import config
 
+
 def create_dummy_block(block_length=120, learning_steps=80, action_dim=18):
     """Create a dummy block for testing"""
     num_sequences = np.ceil(block_length / learning_steps).astype(int)
 
     # Create dummy data
-    obs = np.random.randint(0, 255, (block_length+1, 1, 84, 84), dtype=np.uint8)
-    last_action = np.random.randint(0, 2, (block_length+1, action_dim), dtype=bool)
-    last_reward = np.random.randn(block_length+1).astype(np.float32)
+    obs = np.random.randint(0, 255, (block_length + 1, 1, 84, 84), dtype=np.uint8)
+    last_action = np.random.randint(0, 2, (block_length + 1, action_dim), dtype=bool)
+    last_reward = np.random.randn(block_length + 1).astype(np.float32)
     actions = np.random.randint(0, action_dim, block_length, dtype=np.uint8)
     n_step_reward = np.random.randn(block_length).astype(np.float32)
     gamma = np.random.uniform(0.9, 0.999, block_length).astype(np.float32)
     hiddens = np.random.randn(num_sequences, 2, 512).astype(np.float32)
 
     burn_in_steps = np.array([min(i * learning_steps, 40) for i in range(num_sequences)], dtype=np.uint8)
-    learning_steps_arr = np.array([min(learning_steps, block_length - i * learning_steps) for i in range(num_sequences)], dtype=np.uint8)
-    forward_steps = np.array([min(5, block_length + 1 - np.sum(learning_steps_arr[:i + 1])) for i in range(num_sequences)], dtype=np.uint8)
+    learning_steps_arr = np.array(
+        [min(learning_steps, block_length - i * learning_steps) for i in range(num_sequences)], dtype=np.uint8
+    )
+    forward_steps = np.array(
+        [min(5, block_length + 1 - np.sum(learning_steps_arr[: i + 1])) for i in range(num_sequences)], dtype=np.uint8
+    )
 
     block = Block(
         obs=obs,
@@ -43,7 +48,7 @@ def create_dummy_block(block_length=120, learning_steps=80, action_dim=18):
         num_sequences=num_sequences,
         burn_in_steps=burn_in_steps,
         learning_steps=learning_steps_arr,
-        forward_steps=forward_steps
+        forward_steps=forward_steps,
     )
 
     priorities = np.random.uniform(0.1, 1.0, np.ceil(120 / 80).astype(int)).astype(np.float32)
@@ -83,6 +88,7 @@ def test_priority_tree():
     except Exception as e:
         print(f"✗ Sampling failed: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -107,7 +113,7 @@ def test_replay_buffer_basic():
         priority_queue=priority_queue,
         buffer_capacity=10000,
         batch_size=32,
-        stats_queue=[]
+        stats_queue=[],
     )
 
     print(f"✓ ReplayBuffer created")
@@ -140,6 +146,7 @@ def test_replay_buffer_basic():
     except Exception as e:
         print(f"✗ Sampling failed: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -165,7 +172,7 @@ def test_replay_buffer_with_queues():
         priority_queue=priority_queue,
         buffer_capacity=10000,
         batch_size=32,
-        stats_queue=[]
+        stats_queue=[],
     )
 
     print(f"✓ ReplayBuffer created with {num_actors} actor queues")
@@ -198,6 +205,7 @@ def test_replay_buffer_with_queues():
     except Exception as e:
         print(f"✗ Sampling failed: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -237,7 +245,7 @@ def test_edge_cases():
         priority_queue=priority_queue,
         buffer_capacity=10000,
         batch_size=32,
-        stats_queue=[]
+        stats_queue=[],
     )
 
     print(f"✓ Buffer created (empty)")
@@ -273,6 +281,7 @@ def test_edge_cases():
     except Exception as e:
         print(f"  ✗ Failed to sample: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
 
     # Test 3: Circular buffer wrap-around
@@ -383,7 +392,7 @@ def test_replay_buffer_sample_robustness():
         priority_queue=priority_queue,
         stats_queue=stats_queue,
         buffer_capacity=10000,
-        batch_size=8
+        batch_size=8,
     )
 
     # Add blocks with varying num_sequences
@@ -420,6 +429,7 @@ def test_replay_buffer_sample_robustness():
         except Exception as e:
             print(f"  ✗ FAIL: Sample {i} raised {type(e).__name__}: {e}")
             import traceback
+
             traceback.print_exc()
             all_passed = False
             break
@@ -465,7 +475,7 @@ def test_buffer_capacity():
         priority_queue=priority_queue,
         buffer_capacity=buffer_capacity,
         batch_size=32,
-        stats_queue=[]
+        stats_queue=[],
     )
 
     print(f"✓ Buffer created with capacity={buffer_capacity}")

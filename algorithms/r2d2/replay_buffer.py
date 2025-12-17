@@ -14,6 +14,7 @@ from . import config
 @dataclass
 class Block:
     """A block of sequential experiences stored in the replay buffer"""
+
     obs: np.array
     last_action: np.array
     last_reward: np.array
@@ -34,13 +35,18 @@ class ReplayBuffer:
     Stores blocks of sequential experiences and samples batches with prioritization
     """
 
-    def __init__(self, sample_queue_list, batch_queue, priority_queue, stats_queue,
-                 buffer_capacity=config.buffer_capacity,
-                 sequence_len=config.learning_steps,
-                 alpha=config.prio_exponent,
-                 beta=config.importance_sampling_exponent,
-                 batch_size=config.batch_size):
-
+    def __init__(
+        self,
+        sample_queue_list,
+        batch_queue,
+        priority_queue,
+        stats_queue,
+        buffer_capacity=config.buffer_capacity,
+        sequence_len=config.learning_steps,
+        alpha=config.prio_exponent,
+        beta=config.importance_sampling_exponent,
+        batch_size=config.batch_size,
+    ):
         self.buffer_capacity = buffer_capacity
         self.sequence_len = sequence_len
         self.block_len = config.block_length
@@ -74,7 +80,12 @@ class ReplayBuffer:
 
         self.buffer = [None] * self.num_blocks
 
-        self.sample_queue_list, self.batch_queue, self.priority_queue, self.stats_queue = sample_queue_list, batch_queue, priority_queue, stats_queue
+        self.sample_queue_list, self.batch_queue, self.priority_queue, self.stats_queue = (
+            sample_queue_list,
+            batch_queue,
+            priority_queue,
+            stats_queue,
+        )
 
     def __len__(self):
         return self.size
@@ -180,7 +191,7 @@ class ReplayBuffer:
             start_idx = self.block_ptr * self.seq_per_block
             idxes = np.arange(start_idx, start_idx + block.num_sequences, dtype=np.int64)
 
-            self.priority_tree.update(idxes, priority[:block.num_sequences])
+            self.priority_tree.update(idxes, priority[: block.num_sequences])
 
             if self.buffer[self.block_ptr] is not None:
                 self.size -= np.sum(self.buffer[self.block_ptr].learning_steps).item()
@@ -228,8 +239,8 @@ class ReplayBuffer:
                         valid_is_weights.append(is_weights[i])
 
             # Use only the valid samples
-            idxes = np.array(valid_idxes[:self.batch_size])
-            is_weights = np.array(valid_is_weights[:self.batch_size])
+            idxes = np.array(valid_idxes[: self.batch_size])
+            is_weights = np.array(valid_is_weights[: self.batch_size])
 
             block_idxes = idxes // self.seq_per_block
             sequence_idxes = idxes % self.seq_per_block
@@ -243,10 +254,14 @@ class ReplayBuffer:
 
                 start_idx = block.burn_in_steps[0] + np.sum(block.learning_steps[:sequence_idx])
 
-                obs = block.obs[start_idx - burn_in_step:start_idx + learning_step + forward_step]
-                last_action = block.last_action[start_idx - burn_in_step:start_idx + learning_step + forward_step]
-                last_reward = block.last_reward[start_idx - burn_in_step:start_idx + learning_step + forward_step]
-                obs, last_action, last_reward = torch.from_numpy(obs), torch.from_numpy(last_action), torch.from_numpy(last_reward)
+                obs = block.obs[start_idx - burn_in_step : start_idx + learning_step + forward_step]
+                last_action = block.last_action[start_idx - burn_in_step : start_idx + learning_step + forward_step]
+                last_reward = block.last_reward[start_idx - burn_in_step : start_idx + learning_step + forward_step]
+                obs, last_action, last_reward = (
+                    torch.from_numpy(obs),
+                    torch.from_numpy(last_action),
+                    torch.from_numpy(last_reward),
+                )
 
                 start_idx = np.sum(block.learning_steps[:sequence_idx])
                 end_idx = start_idx + block.learning_steps[sequence_idx]
@@ -281,20 +296,16 @@ class ReplayBuffer:
                 batch_last_action,
                 batch_last_reward,
                 torch.from_numpy(np.stack(batch_hidden)).transpose(0, 1),
-
                 torch.from_numpy(np.concatenate(batch_action)).unsqueeze(1),
                 torch.from_numpy(np.concatenate(batch_reward)),
                 torch.from_numpy(np.concatenate(batch_gamma)),
-
                 torch.ByteTensor(burn_in_steps),
                 torch.ByteTensor(learning_steps),
                 torch.ByteTensor(forward_steps),
-
                 idxes,
                 torch.from_numpy(is_weights.astype(np.float32)),
                 self.block_ptr,
-
-                self.env_steps
+                self.env_steps,
             )
 
         return data

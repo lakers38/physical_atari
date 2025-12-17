@@ -24,7 +24,9 @@ def calculate_mixed_td_errors(td_error, learning_steps):
     start_idx = 0
     mixed_td_errors = np.empty(learning_steps.shape, dtype=td_error.dtype)
     for i, steps in enumerate(learning_steps):
-        mixed_td_errors[i] = 0.9 * td_error[start_idx:start_idx + steps].max() + 0.1 * td_error[start_idx:start_idx + steps].mean()
+        mixed_td_errors[i] = (
+            0.9 * td_error[start_idx : start_idx + steps].max() + 0.1 * td_error[start_idx : start_idx + steps].mean()
+        )
         start_idx += steps
 
     return mixed_td_errors
@@ -33,11 +35,16 @@ def calculate_mixed_td_errors(td_error, learning_steps):
 class LocalBuffer:
     """Store transitions of one episode locally before sending to replay buffer"""
 
-    def __init__(self, action_dim: int, forward_steps: int = config.forward_steps,
-                 burn_in_steps=config.burn_in_steps, learning_steps: int = config.learning_steps,
-                 gamma: float = config.gamma, hidden_dim: int = config.hidden_dim,
-                 block_length: int = config.block_length):
-
+    def __init__(
+        self,
+        action_dim: int,
+        forward_steps: int = config.forward_steps,
+        burn_in_steps=config.burn_in_steps,
+        learning_steps: int = config.learning_steps,
+        gamma: float = config.gamma,
+        hidden_dim: int = config.hidden_dim,
+        block_length: int = config.block_length,
+    ):
         self.action_dim = action_dim
         self.gamma = gamma
         self.hidden_dim = hidden_dim
@@ -91,12 +98,12 @@ class LocalBuffer:
         num_sequences = math.ceil(self.size / self.learning_steps)
 
         max_forward_steps = min(self.size, self.forward_steps)
-        n_step_gamma = [self.gamma ** self.forward_steps] * (self.size - max_forward_steps)
+        n_step_gamma = [self.gamma**self.forward_steps] * (self.size - max_forward_steps)
 
         # last_qval is None means episode done
         if last_qval is not None:
             self.qval_buffer.append(last_qval)
-            n_step_gamma.extend([self.gamma ** i for i in reversed(range(1, max_forward_steps + 1))])
+            n_step_gamma.extend([self.gamma**i for i in reversed(range(1, max_forward_steps + 1))])
         else:
             self.done = True
             self.qval_buffer.append(np.zeros_like(self.qval_buffer[0]))
@@ -115,20 +122,26 @@ class LocalBuffer:
         # Stack q_values: list of [action_dim] -> [size, action_dim]
         qval_buffer = np.stack(self.qval_buffer)
         reward_buffer = self.reward_buffer + [0 for _ in range(self.forward_steps - 1)]
-        n_step_reward = np.convolve(reward_buffer,
-                                     [self.gamma ** (self.forward_steps - 1 - i) for i in range(self.forward_steps)],
-                                     'valid').astype(np.float32)
+        n_step_reward = np.convolve(
+            reward_buffer, [self.gamma ** (self.forward_steps - 1 - i) for i in range(self.forward_steps)], 'valid'
+        ).astype(np.float32)
 
-        burn_in_steps = np.array([min(i * self.learning_steps + self.curr_burn_in_steps, self.burn_in_steps)
-                                 for i in range(num_sequences)], dtype=np.uint8)
-        learning_steps = np.array([min(self.learning_steps, self.size - i * self.learning_steps)
-                                  for i in range(num_sequences)], dtype=np.uint8)
-        forward_steps = np.array([min(self.forward_steps, self.size + 1 - np.sum(learning_steps[:i + 1]))
-                                 for i in range(num_sequences)], dtype=np.uint8)
+        burn_in_steps = np.array(
+            [min(i * self.learning_steps + self.curr_burn_in_steps, self.burn_in_steps) for i in range(num_sequences)],
+            dtype=np.uint8,
+        )
+        learning_steps = np.array(
+            [min(self.learning_steps, self.size - i * self.learning_steps) for i in range(num_sequences)],
+            dtype=np.uint8,
+        )
+        forward_steps = np.array(
+            [min(self.forward_steps, self.size + 1 - np.sum(learning_steps[: i + 1])) for i in range(num_sequences)],
+            dtype=np.uint8,
+        )
 
         assert forward_steps[-1] == 1 and burn_in_steps[0] == self.curr_burn_in_steps
 
-        max_qval = np.max(qval_buffer[max_forward_steps:self.size + 1], axis=1)
+        max_qval = np.max(qval_buffer[max_forward_steps : self.size + 1], axis=1)
         max_qval = np.pad(max_qval, (0, max_forward_steps - 1), 'edge')
         target_qval = qval_buffer[np.arange(self.size), actions]
 
@@ -139,18 +152,29 @@ class LocalBuffer:
         priorities[:num_sequences] = calculate_mixed_td_errors(td_errors, learning_steps)
 
         # Save burn-in information for next block
-        self.obs_buffer = self.obs_buffer[-self.burn_in_steps - 1:]
-        self.last_action_buffer = self.last_action_buffer[-self.burn_in_steps - 1:]
-        self.last_reward_buffer = self.last_reward_buffer[-self.burn_in_steps - 1:]
-        self.hidden_buffer = self.hidden_buffer[-self.burn_in_steps - 1:]
+        self.obs_buffer = self.obs_buffer[-self.burn_in_steps - 1 :]
+        self.last_action_buffer = self.last_action_buffer[-self.burn_in_steps - 1 :]
+        self.last_reward_buffer = self.last_reward_buffer[-self.burn_in_steps - 1 :]
+        self.hidden_buffer = self.hidden_buffer[-self.burn_in_steps - 1 :]
         self.action_buffer.clear()
         self.reward_buffer.clear()
         self.qval_buffer.clear()
         self.curr_burn_in_steps = len(self.obs_buffer) - 1
         self.size = 0
 
-        block = Block(obs, last_action, last_reward, actions, n_step_reward, n_step_gamma,
-                     hiddens, num_sequences, burn_in_steps, learning_steps, forward_steps)
+        block = Block(
+            obs,
+            last_action,
+            last_reward,
+            actions,
+            n_step_reward,
+            n_step_gamma,
+            hiddens,
+            num_sequences,
+            burn_in_steps,
+            learning_steps,
+            forward_steps,
+        )
         return [block, priorities, self.sum_reward if self.done else None]
 
 
@@ -161,11 +185,16 @@ class Actor:
     Uses epsilon-greedy policy with actor-specific epsilon value
     """
 
-    def __init__(self, epsilon: float, model, sample_queue, env_fn,
-                 obs_shape: np.ndarray = config.obs_shape,
-                 max_episode_steps: int = config.max_episode_steps,
-                 block_length: int = config.block_length):
-
+    def __init__(
+        self,
+        epsilon: float,
+        model,
+        sample_queue,
+        env_fn,
+        obs_shape: np.ndarray = config.obs_shape,
+        max_episode_steps: int = config.max_episode_steps,
+        block_length: int = config.block_length,
+    ):
         self.env = env_fn()
         self.action_dim = self.env.action_space.n
         self.model = Network(self.action_dim)

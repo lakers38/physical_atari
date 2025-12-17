@@ -129,7 +129,9 @@ class ActionSetWrapper(gym.Wrapper):
         # Update action space if we have a custom mapping
         if self.action_mapping is not None:
             self.action_space = spaces.Discrete(len(self.action_mapping))
-            print(f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}")
+            print(
+                f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}"
+            )
 
     def step(self, action):
         # Map the restricted action to the full action space if needed
@@ -242,7 +244,8 @@ def create_single_atari_env(
     if video_path:
         print(f"[Video] Recording videos every {video_freq} episodes to {video_path}")
         env = RecordVideo(
-            env, video_folder=video_path,
+            env,
+            video_folder=video_path,
             episode_trigger=lambda ep: ep % video_freq == 0,
             name_prefix="training",
             video_length=500,
@@ -338,11 +341,7 @@ def train_loop(
         replay_buffer.add(obs, action, reward_clipped, next_obs, done)
 
         metrics = None
-        if (
-            replay_buffer.size >= batch_size
-            and step >= learning_starts
-            and step % train_freq == 0
-        ):
+        if replay_buffer.size >= batch_size and step >= learning_starts and step % train_freq == 0:
             for _ in range(gradient_steps):
                 batch = replay_buffer.sample(batch_size)
                 metrics = agent.update(*batch)
@@ -419,16 +418,18 @@ def train_loop(
             mean_alpha = np.mean(recent_alphas[-1000:])
 
             # Console output
-            print(f"Step {step:,} | Ep: {episode_count} | "
-                  f"Reward: {mean_reward:6.2f} (max:{max_reward:5.1f} min:{min_reward:5.1f}) | "
-                  f"Len: {mean_length:5.1f} | "
-                  f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
-                  f"Ent: {mean_entropy:.3f} | "
-                  f"Alpha: {mean_alpha:.4f} | "
-                  f"ValLoss: {mean_value_loss:.4f} | "
-                  f"TotLoss: {mean_total_loss:.4f} | "
-                  f"ActLoss: {mean_actor_loss:.4f} | "
-                  f"FPS: {fps:5.1f}")
+            print(
+                f"Step {step:,} | Ep: {episode_count} | "
+                f"Reward: {mean_reward:6.2f} (max:{max_reward:5.1f} min:{min_reward:5.1f}) | "
+                f"Len: {mean_length:5.1f} | "
+                f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
+                f"Ent: {mean_entropy:.3f} | "
+                f"Alpha: {mean_alpha:.4f} | "
+                f"ValLoss: {mean_value_loss:.4f} | "
+                f"TotLoss: {mean_total_loss:.4f} | "
+                f"ActLoss: {mean_actor_loss:.4f} | "
+                f"FPS: {fps:5.1f}"
+            )
 
             # TensorBoard - Episode metrics
             tensorboard_writer.add_scalar("train/mean_reward_100ep", mean_reward, step)
@@ -655,7 +656,9 @@ def train_agent(
     else:
         print(f"Entropy coef (fixed): {entropy_coef}")
     print(f"Replay buffer size: {buffer_size} | Batch size: {batch_size}")
-    print(f"Learning starts after: {learning_starts} steps | Train freq: {train_freq} | Gradient steps: {gradient_steps}")
+    print(
+        f"Learning starts after: {learning_starts} steps | Train freq: {train_freq} | Gradient steps: {gradient_steps}"
+    )
     print(f"Gamma: {gamma}")
     if use_wandb and wandb_run:
         print(f"WandB: {wandb_run.url}")
@@ -695,7 +698,9 @@ def train_agent(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train a soft actor-critic style agent in Gymnasium simulation with optional latency")
+    parser = argparse.ArgumentParser(
+        description="Train a soft actor-critic style agent in Gymnasium simulation with optional latency"
+    )
     parser.add_argument(
         "--env", type=str, default="ALE/MsPacman-v5", help="Atari environment name (default: ALE/MsPacman-v5)"
     )
@@ -716,13 +721,26 @@ def main():
     )
     parser.add_argument("--load-model", type=str, default=None, help="Path to pre-trained model to continue training")
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate for actor/CNN (default: 1e-4)")
-    parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01, only used if --no-auto-entropy-tuning)")
-    parser.add_argument("--no-auto-entropy-tuning", action="store_true", help="Disable automatic entropy tuning (use fixed entropy_coef instead)")
+    parser.add_argument(
+        "--entropy-coef",
+        type=float,
+        default=0.01,
+        help="Entropy bonus coefficient (default: 0.01, only used if --no-auto-entropy-tuning)",
+    )
+    parser.add_argument(
+        "--no-auto-entropy-tuning",
+        action="store_true",
+        help="Disable automatic entropy tuning (use fixed entropy_coef instead)",
+    )
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
     parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer size (default: 100k)")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for updates (default: 256)")
-    parser.add_argument("--learning-starts", type=int, default=1_000, help="Steps to collect before starting updates (default: 1,000)")
-    parser.add_argument("--train-freq", type=int, default=1, help="Environment steps between training phases (default: 1)")
+    parser.add_argument(
+        "--learning-starts", type=int, default=1_000, help="Steps to collect before starting updates (default: 1,000)"
+    )
+    parser.add_argument(
+        "--train-freq", type=int, default=1, help="Environment steps between training phases (default: 1)"
+    )
     parser.add_argument("--gradient-steps", type=int, default=1, help="Gradient steps per training phase (default: 1)")
     parser.add_argument("--n-stack", type=int, default=4, help="Number of frames to stack (default: 4)")
     parser.add_argument("--input-size", type=int, default=128, help="Input image size (default: 128)")

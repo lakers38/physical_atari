@@ -46,21 +46,18 @@ class CNNFeatureExtractor(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(n_stack, 32, kernel_size=8, stride=4),  # 84→20, 128→31
             nn.ReLU(True),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),       # 20→9, 31→14
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # 20→9, 31→14
             nn.ReLU(True),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),       # 9→7, 14→12
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # 9→7, 14→12
             nn.ReLU(True),
-            nn.Flatten()
+            nn.Flatten(),
         )
 
         # Calculate conv output size
         conv_out_size = self._get_conv_output_size(input_size)
 
         # Fully connected layer
-        self.fc = nn.Sequential(
-            nn.Linear(conv_out_size, feature_dim),
-            nn.ReLU(True)
-        )
+        self.fc = nn.Sequential(nn.Linear(conv_out_size, feature_dim), nn.ReLU(True))
 
         # Initialize weights
         self._initialize_weights()
@@ -158,9 +155,7 @@ class QNetwork(nn.Module):
         self.num_actions = num_actions
 
         self.network = nn.Sequential(
-            nn.Linear(feature_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, num_actions)
+            nn.Linear(feature_dim, hidden_dim), nn.ReLU(True), nn.Linear(hidden_dim, num_actions)
         )
 
         # Initialize weights
@@ -207,9 +202,7 @@ class PolicyNetwork(nn.Module):
         self.num_actions = num_actions
 
         self.network = nn.Sequential(
-            nn.Linear(feature_dim, hidden_dim),
-            nn.ReLU(True),
-            nn.Linear(hidden_dim, num_actions)
+            nn.Linear(feature_dim, hidden_dim), nn.ReLU(True), nn.Linear(hidden_dim, num_actions)
         )
 
         # Initialize weights
@@ -285,9 +278,7 @@ class SACAgent:
 
             # Use log_alpha for numerical stability (ensures alpha > 0)
             # Initialize to log(0.2) to start with reasonable alpha
-            self.log_alpha = torch.tensor(
-                [np.log(0.2)], requires_grad=True, device=self.device, dtype=torch.float32
-            )
+            self.log_alpha = torch.tensor([np.log(0.2)], requires_grad=True, device=self.device, dtype=torch.float32)
             self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=learning_rate)
             # Keep alpha in a sane range to avoid exploding value targets
             self.min_alpha = 1e-4
@@ -302,42 +293,28 @@ class SACAgent:
             self.alpha_optimizer = None
 
         # Shared CNN feature extractor
-        self.cnn = CNNFeatureExtractor(
-            n_stack=n_stack,
-            feature_dim=feature_dim,
-            input_size=input_size
-        ).to(self.device)
+        self.cnn = CNNFeatureExtractor(n_stack=n_stack, feature_dim=feature_dim, input_size=input_size).to(self.device)
 
         # Policy network (actor)
-        self.actor = PolicyNetwork(
-            feature_dim=feature_dim,
-            hidden_dim=actor_hidden_dim,
-            num_actions=num_actions
-        ).to(self.device)
+        self.actor = PolicyNetwork(feature_dim=feature_dim, hidden_dim=actor_hidden_dim, num_actions=num_actions).to(
+            self.device
+        )
 
         # Twin Q-networks (critics)
-        self.q1 = QNetwork(
-            feature_dim=feature_dim,
-            hidden_dim=value_hidden_dim,
-            num_actions=num_actions
-        ).to(self.device)
-        self.q2 = QNetwork(
-            feature_dim=feature_dim,
-            hidden_dim=value_hidden_dim,
-            num_actions=num_actions
-        ).to(self.device)
+        self.q1 = QNetwork(feature_dim=feature_dim, hidden_dim=value_hidden_dim, num_actions=num_actions).to(
+            self.device
+        )
+        self.q2 = QNetwork(feature_dim=feature_dim, hidden_dim=value_hidden_dim, num_actions=num_actions).to(
+            self.device
+        )
 
         # Target Q-networks
-        self.q1_target = QNetwork(
-            feature_dim=feature_dim,
-            hidden_dim=value_hidden_dim,
-            num_actions=num_actions
-        ).to(self.device)
-        self.q2_target = QNetwork(
-            feature_dim=feature_dim,
-            hidden_dim=value_hidden_dim,
-            num_actions=num_actions
-        ).to(self.device)
+        self.q1_target = QNetwork(feature_dim=feature_dim, hidden_dim=value_hidden_dim, num_actions=num_actions).to(
+            self.device
+        )
+        self.q2_target = QNetwork(feature_dim=feature_dim, hidden_dim=value_hidden_dim, num_actions=num_actions).to(
+            self.device
+        )
 
         # Initialize target networks with same weights
         self.q1_target.load_state_dict(self.q1.state_dict())
@@ -384,9 +361,9 @@ class SACAgent:
         _ = obs_batch
 
     def _extract_features(self, obs_batch: np.ndarray) -> Tuple[torch.Tensor, np.ndarray]:
-        assert obs_batch.ndim == 4 and obs_batch.shape[-1] == self.n_stack, (
-            f"obs_batch expected shape (*, {self.input_size}, {self.input_size}, {self.n_stack}), got {obs_batch.shape}"
-        )
+        assert (
+            obs_batch.ndim == 4 and obs_batch.shape[-1] == self.n_stack
+        ), f"obs_batch expected shape (*, {self.input_size}, {self.input_size}, {self.n_stack}), got {obs_batch.shape}"
         obs_batch = np.transpose(obs_batch, (0, 3, 1, 2))
         obs_t = torch.as_tensor(obs_batch, device=self.device, dtype=torch.float32) / 255.0
         feats = self.cnn(obs_t)
@@ -492,11 +469,9 @@ class SACAgent:
 
         # ===== Update Policy =====
         # Re-extract features after Q-update (CNN weights changed)
-        current_feats_new = self.cnn(torch.as_tensor(
-            np.transpose(obs_batch, (0, 3, 1, 2)),
-            device=self.device,
-            dtype=torch.float32
-        ) / 255.0)
+        current_feats_new = self.cnn(
+            torch.as_tensor(np.transpose(obs_batch, (0, 3, 1, 2)), device=self.device, dtype=torch.float32) / 255.0
+        )
 
         # Get current policy distribution
         logits = self.actor(current_feats_new.detach())  # Detach to avoid backprop through Q

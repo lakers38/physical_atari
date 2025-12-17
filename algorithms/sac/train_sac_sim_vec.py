@@ -131,7 +131,9 @@ class ActionSetWrapper(gym.Wrapper):
         # Update action space if we have a custom mapping
         if self.action_mapping is not None:
             self.action_space = spaces.Discrete(len(self.action_mapping))
-            print(f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}")
+            print(
+                f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}"
+            )
 
     def step(self, action):
         # Map the restricted action to the full action space if needed
@@ -202,6 +204,7 @@ def make_atari_env(
     record_video: bool = False,
 ):
     """Factory for a single Atari env with preprocessing and optional latency."""
+
     def thunk():
         use_full_action_space = reduce_action_set in (0, 2)
         env = gym.make(
@@ -237,6 +240,7 @@ def make_atari_env(
             )
         env.reset(seed=seed)
         return env
+
     return thunk
 
 
@@ -360,8 +364,11 @@ def train_loop(
 
         # Update agent
         metrics = agent.update(
-            obs, actions, reward_clipped,
-            next_obs, done,
+            obs,
+            actions,
+            reward_clipped,
+            next_obs,
+            done,
         )
 
         # Track metrics for logging window
@@ -439,15 +446,17 @@ def train_loop(
             mean_value_next = np.mean(recent_value_next[-1000:])
 
             # Console output (global frame count first)
-            print(f"Frame {frame_count:,} | Step {step:,} | Ep: {int(np.sum(episode_count))} | "
-                  f"Reward: {mean_reward:6.2f} (max:{max_reward:5.1f} min:{min_reward:5.1f}) | "
-                  f"Len: {mean_length:5.1f} | "
-                  f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
-                  f"Ent: {mean_entropy:.3f} | "
-                  f"ValLoss: {mean_value_loss:.4f} | "
-                  f"TotLoss: {mean_total_loss:.4f} | "
-                  f"ActLoss: {mean_actor_loss:.4f} | "
-                  f"FPS: {fps:5.1f}")
+            print(
+                f"Frame {frame_count:,} | Step {step:,} | Ep: {int(np.sum(episode_count))} | "
+                f"Reward: {mean_reward:6.2f} (max:{max_reward:5.1f} min:{min_reward:5.1f}) | "
+                f"Len: {mean_length:5.1f} | "
+                f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
+                f"Ent: {mean_entropy:.3f} | "
+                f"ValLoss: {mean_value_loss:.4f} | "
+                f"TotLoss: {mean_total_loss:.4f} | "
+                f"ActLoss: {mean_actor_loss:.4f} | "
+                f"FPS: {fps:5.1f}"
+            )
 
             # TensorBoard - Episode metrics
             tensorboard_writer.add_scalar("train/mean_reward_100ep", mean_reward, frame_count)
@@ -696,7 +705,9 @@ def train_agent(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train a soft actor-critic style agent in Gymnasium simulation with optional latency")
+    parser = argparse.ArgumentParser(
+        description="Train a soft actor-critic style agent in Gymnasium simulation with optional latency"
+    )
     parser.add_argument(
         "--env", type=str, default="ALE/MsPacman-v5", help="Atari environment name (default: ALE/MsPacman-v5)"
     )
@@ -719,7 +730,9 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate for actor/CNN (default: 1e-4)")
     parser.add_argument("--entropy-coef", type=float, default=0.01, help="Entropy bonus coefficient (default: 0.01)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
-    parser.add_argument("--value-coef", type=float, default=0.5, help="Weight for critic loss in total loss (default: 0.5)")
+    parser.add_argument(
+        "--value-coef", type=float, default=0.5, help="Weight for critic loss in total loss (default: 0.5)"
+    )
     parser.add_argument("--n-stack", type=int, default=4, help="Number of frames to stack (default: 4)")
     parser.add_argument("--input-size", type=int, default=128, help="Input image size (default: 128)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")

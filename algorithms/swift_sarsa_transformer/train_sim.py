@@ -103,14 +103,16 @@ class ActionSetWrapper(gym.Wrapper):
             self.action_mapping = None
         elif reduce_action_set == 2:
             # ALE action indices: UP=2, DOWN=5, LEFT=4, RIGHT=3
-            self.action_mapping = [2,5,4,3] # Switch back to [2, 5, 4, 3] for full action space
+            self.action_mapping = [2, 5, 4, 3]  # Switch back to [2, 5, 4, 3] for full action space
             print(f"[ActionSetWrapper] Restricting {game_name} to 4 directional actions only")
         else:
             self.action_mapping = None
 
         if self.action_mapping is not None:
             self.action_space = spaces.Discrete(len(self.action_mapping))
-            print(f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}")
+            print(
+                f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}"
+            )
 
     def step(self, action):
         if self.action_mapping is not None:
@@ -218,6 +220,7 @@ class ActionSetWrapper(gym.Wrapper):
 # -----------------------------
 class FeatureBackbone:
     """Minimal interface for swapping different feature encoders."""
+
     feature_dim: int
     needs_pixel_stacking: bool = False  # If True, expects stacked frames as input
 
@@ -254,7 +257,11 @@ class RFDetrBackbone(FeatureBackbone):
     def _prep_obs(self, obs: np.ndarray) -> torch.Tensor:
         tensor = torch.from_numpy(obs).float() / 255.0
         tensor = tensor.permute(2, 0, 1)  # CHW
-        assert tensor.shape == (3, self.resolution, self.resolution), f"Expected (3, {self.resolution}, {self.resolution}), got {tensor.shape}"
+        assert tensor.shape == (
+            3,
+            self.resolution,
+            self.resolution,
+        ), f"Expected (3, {self.resolution}, {self.resolution}), got {tensor.shape}"
         tensor = TVF.normalize(tensor, self.means, self.stds)
         return tensor
 
@@ -262,7 +269,12 @@ class RFDetrBackbone(FeatureBackbone):
         with torch.no_grad():
             tensor = self._prep_obs(obs).to(self.device)
             nested = nested_tensor_from_tensor_list([tensor])
-            assert nested.tensors.shape == (1,3,self.resolution,self.resolution), f"Expected (1, 3, {self.resolution}, {self.resolution}), got {nested.tensors.shape}"
+            assert nested.tensors.shape == (
+                1,
+                3,
+                self.resolution,
+                self.resolution,
+            ), f"Expected (1, 3, {self.resolution}, {self.resolution}), got {nested.tensors.shape}"
             feats_out = self.model.backbone(nested)
             feat_list = feats_out[0] if isinstance(feats_out, tuple) else feats_out
             last = feat_list[-1]
@@ -323,6 +335,7 @@ class CartPoleIdentityBackbone(FeatureBackbone):
     Pole Angular Vel:   unbounded            (20 bins, clip at -5/5)
     Outputs a 1-hot concatenation of all 4 variable buckets: 80-dim binary.
     """
+
     CART_POSITION_BINS = 8
     CART_VELOCITY_BINS = 8
     POLE_ANGLE_BINS = 8
@@ -345,10 +358,7 @@ class CartPoleIdentityBackbone(FeatureBackbone):
         assert len(obs_space.shape) == 1  # e.g. CartPole: (4,)
         self.discretize = discretize
         self.feature_dim = (
-            self.CART_POSITION_BINS +
-            self.CART_VELOCITY_BINS +
-            self.POLE_ANGLE_BINS +
-            self.POLE_ANGVEL_BINS
+            self.CART_POSITION_BINS + self.CART_VELOCITY_BINS + self.POLE_ANGLE_BINS + self.POLE_ANGVEL_BINS
         )
 
     def _discretize(self, val, vmin, vmax, nbins):
@@ -364,18 +374,10 @@ class CartPoleIdentityBackbone(FeatureBackbone):
             # Just return the flattened continuous input observations as the feature vector
             return obs.flatten().astype(np.float32)
         # Discretize each variable
-        pos = self._discretize(
-            obs[0], self.CART_POSITION_MIN, self.CART_POSITION_MAX, self.CART_POSITION_BINS
-        )
-        vel = self._discretize(
-            obs[1], self.CART_VELOCITY_MIN, self.CART_VELOCITY_MAX, self.CART_VELOCITY_BINS
-        )
-        ang = self._discretize(
-            obs[2], self.POLE_ANGLE_MIN, self.POLE_ANGLE_MAX, self.POLE_ANGLE_BINS
-        )
-        angvel = self._discretize(
-            obs[3], self.POLE_ANGVEL_MIN, self.POLE_ANGVEL_MAX, self.POLE_ANGVEL_BINS
-        )
+        pos = self._discretize(obs[0], self.CART_POSITION_MIN, self.CART_POSITION_MAX, self.CART_POSITION_BINS)
+        vel = self._discretize(obs[1], self.CART_VELOCITY_MIN, self.CART_VELOCITY_MAX, self.CART_VELOCITY_BINS)
+        ang = self._discretize(obs[2], self.POLE_ANGLE_MIN, self.POLE_ANGLE_MAX, self.POLE_ANGLE_BINS)
+        angvel = self._discretize(obs[3], self.POLE_ANGVEL_MIN, self.POLE_ANGVEL_MAX, self.POLE_ANGVEL_BINS)
         # 1-hot encode each variable, then concatenate
         feature = np.zeros(self.feature_dim, dtype=np.float32)
         feature[pos] = 1.0
@@ -392,7 +394,14 @@ class PPOBackbone(FeatureBackbone):
     Expects pixel-level stacked frames as input.
     """
 
-    def __init__(self, device: str, frame_size: int, weights_path: Optional[str] = None, in_channels: int = 4, frame_stack: int = 0):
+    def __init__(
+        self,
+        device: str,
+        frame_size: int,
+        weights_path: Optional[str] = None,
+        in_channels: int = 4,
+        frame_stack: int = 0,
+    ):
         self.device = torch.device(device)
         self.frame_size = frame_size
         self.in_channels = in_channels
@@ -488,7 +497,7 @@ class PPOBackbone(FeatureBackbone):
         except Exception as e:
             print(f"[PPOBackbone] Failed to load as SB3 model: {e}")
             print(f"[PPOBackbone] Attempting to load as raw state_dict...")
-            raise(Exception("PPO FAILED TO LOAD"))
+            raise (Exception("PPO FAILED TO LOAD"))
 
     def _prep_obs(self, obs: np.ndarray) -> torch.Tensor:
         """
@@ -534,7 +543,9 @@ class RainbowBackbone(FeatureBackbone):
             # Handle different checkpoint formats
             if isinstance(checkpoint, dict) and "network_state_dict" in checkpoint:
                 state_dict = checkpoint["network_state_dict"]
-                print(f"[RainbowBackbone] Loaded training checkpoint (frame_count: {checkpoint.get('frame_count', 'unknown')})")
+                print(
+                    f"[RainbowBackbone] Loaded training checkpoint (frame_count: {checkpoint.get('frame_count', 'unknown')})"
+                )
             elif isinstance(checkpoint, dict):
                 state_dict = checkpoint
             else:
@@ -549,13 +560,12 @@ class RainbowBackbone(FeatureBackbone):
             print(f"  - Input channels: {checkpoint_in_channels}")
             print(f"  - FC input dim: {fc_input_dim}")
 
-
             # [RainbowBackbone] Loading weights from rainbow_dqn_checkpoint.pt
             # [RainbowBackbone] Loaded training checkpoint (frame_count: 549314)
             # [RainbowBackbone] Detected architecture:
             #   - Input channels: 16
             #   - FC input dim: 9216
-            
+
             # Create just the conv encoder directly
             self.encoder = nn.Sequential(
                 nn.Conv2d(checkpoint_in_channels, 32, kernel_size=8, stride=4),
@@ -567,11 +577,7 @@ class RainbowBackbone(FeatureBackbone):
             )
 
             # Load only conv weights from checkpoint
-            conv_state_dict = {
-                k.replace('conv.', ''): v
-                for k, v in state_dict.items()
-                if k.startswith('conv.')
-            }
+            conv_state_dict = {k.replace('conv.', ''): v for k, v in state_dict.items() if k.startswith('conv.')}
             self.encoder.load_state_dict(conv_state_dict)
             print(f"[RainbowBackbone] Conv encoder weights loaded successfully")
 
@@ -587,7 +593,9 @@ class RainbowBackbone(FeatureBackbone):
                 dummy_output = self.encoder(dummy_input)
                 flattened = dummy_output.view(dummy_output.size(0), -1)
                 self.feature_dim = flattened.size(1)
-                print(f"[RainbowBackbone] Computed feature_dim={self.feature_dim} from dummy forward pass (checkpoint had fc_input_dim={fc_input_dim})")
+                print(
+                    f"[RainbowBackbone] Computed feature_dim={self.feature_dim} from dummy forward pass (checkpoint had fc_input_dim={fc_input_dim})"
+                )
         else:
             # No checkpoint - use default architecture
             self.encoder = nn.Sequential(
@@ -648,6 +656,7 @@ def dense_to_sparse(feature_vec: np.ndarray) -> List[Tuple[int, float]]:
     flat = feature_vec.flatten()
     return [(int(i), float(v)) for i, v in enumerate(flat)]
 
+
 def _stat_dict(values: List[float], prefix: str) -> Dict[str, float]:
     if not values:
         return {
@@ -661,6 +670,7 @@ def _stat_dict(values: List[float], prefix: str) -> Dict[str, float]:
         f"sarsa/{prefix}_min": float(arr.min()),
         f"sarsa/{prefix}_max": float(arr.max()),
     }
+
 
 def collect_swiftsarsa_stats(agent) -> Dict[str, float]:
     """Collect mean/min/max for key SwiftSarsa internal buffers."""
@@ -733,8 +743,12 @@ class SwiftSarsaAgent:
             # epsilon-greedy distribution entropy
             p_rand = eps_greedy / self.num_actions
             p_greedy = 1.0 - eps_greedy + p_rand
-            entropy = float(-(p_greedy * math.log(max(p_greedy, 1e-12)) +
-                              (self.num_actions - 1) * p_rand * math.log(max(p_rand, 1e-12))))
+            entropy = float(
+                -(
+                    p_greedy * math.log(max(p_greedy, 1e-12))
+                    + (self.num_actions - 1) * p_rand * math.log(max(p_rand, 1e-12))
+                )
+            )
         return action, values, entropy, eps_greedy
 
     def learn(self, feature_vec: np.ndarray, reward: float, gamma: float, action: int) -> float:
@@ -748,9 +762,12 @@ class SwiftSarsaAgent:
 def create_cartpole_env(seed: int, video_path: str):
     env = gym.make("CartPole-v1", render_mode="rgb_array")
     env = RecordEpisodeStatistics(env)
-    env = RecordVideo(env, video_folder=video_path, episode_trigger=lambda ep: ep % 100 == 0, name_prefix="training", video_length=500)
+    env = RecordVideo(
+        env, video_folder=video_path, episode_trigger=lambda ep: ep % 100 == 0, name_prefix="training", video_length=500
+    )
     env.reset(seed=seed)
     return env
+
 
 def create_single_atari_env(
     env_name: str,
@@ -955,9 +972,19 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
             elapsed = max(time.time() - episode_start_time, 1e-6)
             fps = episode_len / elapsed
             q_arr = np.array(episode_q_vals, dtype=np.float32) if episode_q_vals else np.array([0.0], dtype=np.float32)
-            feat_arr = np.array(episode_feat_norms, dtype=np.float32) if episode_feat_norms else np.array([0.0], dtype=np.float32)
-            ent_arr = np.array(episode_entropies, dtype=np.float32) if episode_entropies else np.array([0.0], dtype=np.float32)
-            delta_arr = np.array(episode_deltas, dtype=np.float32) if episode_deltas else np.array([0.0], dtype=np.float32)
+            feat_arr = (
+                np.array(episode_feat_norms, dtype=np.float32)
+                if episode_feat_norms
+                else np.array([0.0], dtype=np.float32)
+            )
+            ent_arr = (
+                np.array(episode_entropies, dtype=np.float32)
+                if episode_entropies
+                else np.array([0.0], dtype=np.float32)
+            )
+            delta_arr = (
+                np.array(episode_deltas, dtype=np.float32) if episode_deltas else np.array([0.0], dtype=np.float32)
+            )
             q_min = float(q_arr.min()) if q_arr.size else 0.0
             feat_min = float(feat_arr.min()) if feat_arr.size else 0.0
             feat_max = float(feat_arr.max()) if feat_arr.size else 0.0
@@ -965,7 +992,9 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
             ent_max = float(ent_arr.max()) if ent_arr.size else 0.0
             delta_min = float(delta_arr.min()) if delta_arr.size else 0.0
             delta_max = float(delta_arr.max()) if delta_arr.size else 0.0
-            q_taken = np.array(episode_q_taken, dtype=np.float32) if episode_q_taken else np.array([0.0], dtype=np.float32)
+            q_taken = (
+                np.array(episode_q_taken, dtype=np.float32) if episode_q_taken else np.array([0.0], dtype=np.float32)
+            )
             q_taken_min = float(q_taken.min()) if q_taken.size else 0.0
             q_taken_max = float(q_taken.max()) if q_taken.size else 0.0
             q_taken_mean = float(q_taken.mean()) if q_taken.size else 0.0
@@ -1085,7 +1114,7 @@ def build_backbone(args, sample_obs: np.ndarray) -> FeatureBackbone:
             device=args.device,
             frame_size=args.frame_size,
             weights_path=args.rainbow_weights_path,
-            in_channels=in_channels
+            in_channels=in_channels,
         )
     if args.backbone == "ppo":
         in_channels = 1 if args.grayscale else 3
@@ -1100,7 +1129,9 @@ def build_backbone(args, sample_obs: np.ndarray) -> FeatureBackbone:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train Swift-Sarsa on Ms. Pacman with transformer features (simulation).")
+    parser = argparse.ArgumentParser(
+        description="Train Swift-Sarsa on Ms. Pacman with transformer features (simulation)."
+    )
     parser.add_argument("--env_name", type=str, default="ALE/MsPacman-v5")
     parser.add_argument("--game_name", type=str, default="ms_pacman")
     parser.add_argument("--seed", type=int, default=42)
@@ -1136,12 +1167,24 @@ def parse_args():
     parser.add_argument("--eps_greedy_end", type=float, default=0.05)
     parser.add_argument("--eps_greedy_end_timestamp", type=int, default=100000)
     parser.add_argument("--epsilon", type=float, default=0.10)
-    parser.add_argument("--softmax_temp", type=float, default=.1)
+    parser.add_argument("--softmax_temp", type=float, default=0.1)
 
     # Backbone
-    parser.add_argument("--backbone", type=str, default="rfdetr_nano", help="Options: rfdetr_nano/small/medium/large, resnet_18, rainbow, or ppo.")
-    parser.add_argument("--rainbow_weights_path", type=str, default=None, help="Path to pretrained Rainbow model weights (optional).")
-    parser.add_argument("--ppo_weights_path", type=str, default=None, help="Path to pretrained PPO model checkpoint .zip file (optional).")
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default="rfdetr_nano",
+        help="Options: rfdetr_nano/small/medium/large, resnet_18, rainbow, or ppo.",
+    )
+    parser.add_argument(
+        "--rainbow_weights_path", type=str, default=None, help="Path to pretrained Rainbow model weights (optional)."
+    )
+    parser.add_argument(
+        "--ppo_weights_path",
+        type=str,
+        default=None,
+        help="Path to pretrained PPO model checkpoint .zip file (optional).",
+    )
 
     return parser.parse_args()
 
@@ -1215,7 +1258,9 @@ def main():
 
     agent = SwiftSarsaAgent(num_actions=num_actions, feature_dim=feature_dim, cfg=agent_cfg)
 
-    print(f"Starting training: total_frames={args.total_frames}, actions={num_actions}, feature_dim={feature_dim}, stacking_mode={'pixel' if getattr(backbone, 'needs_pixel_stacking', False) else 'feature'}")
+    print(
+        f"Starting training: total_frames={args.total_frames}, actions={num_actions}, feature_dim={feature_dim}, stacking_mode={'pixel' if getattr(backbone, 'needs_pixel_stacking', False) else 'feature'}"
+    )
     paths = {
         "experiment_dir": experiment_dir,
         "checkpoints": os.path.join(experiment_dir, "models", "checkpoints"),

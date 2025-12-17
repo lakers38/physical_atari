@@ -16,6 +16,7 @@ from r2d2.model import Network, AgentState
 from r2d2.actor import LocalBuffer, Actor
 from r2d2 import config
 
+
 def test_environment():
     """Test 1: Environment creation and basic operations"""
     print("=" * 60)
@@ -151,6 +152,7 @@ def test_local_buffer(action_dim):
     except Exception as e:
         print(f"✗ Buffer finish FAILED: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -173,6 +175,7 @@ def test_local_buffer(action_dim):
     except Exception as e:
         print(f"✗ Buffer finish FAILED: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -251,6 +254,7 @@ def test_full_episode(action_dim):
     except Exception as e:
         print(f"✗ Buffer finish FAILED: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
 
     env.close()
@@ -284,6 +288,7 @@ def main():
     except Exception as e:
         print(f"\n✗ FATAL ERROR: {type(e).__name__}: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

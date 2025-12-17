@@ -17,15 +17,18 @@ from agent_actor_critic import SACAgent
 # Import pytest only if available (for running via pytest)
 try:
     import pytest
+
     PYTEST_AVAILABLE = True
 except ImportError:
     PYTEST_AVAILABLE = False
+
     # Create dummy pytest decorator for standalone execution
     class DummyMark:
         @staticmethod
         def parametrize(*args, **kwargs):
             def decorator(func):
                 return func
+
             return decorator
 
     class DummyPytest:
@@ -59,6 +62,7 @@ def _make_agent(overrides=None):
 
 # Cache a single observation for bandit-style tests (same state every time)
 _CACHED_OBS = None
+
 
 def _make_obs():
     """Create a dummy observation (128x128x1 single grayscale frame)."""
@@ -107,14 +111,19 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
 
         # Update agent
         agent.update(
-            obs[np.newaxis], actions, [reward],
-            next_obs[np.newaxis], [done],
+            obs[np.newaxis],
+            actions,
+            [reward],
+            next_obs[np.newaxis],
+            [done],
         )
 
         obs = next_obs
 
         if t % 32 == 0:
-            print(f"Step {t}: action={action}, reward={reward:.1f}, counts={action_counts}, entropy={entropy.item():.3f}, log_probs={log_probs.item():.3f}")
+            print(
+                f"Step {t}: action={action}, reward={reward:.1f}, counts={action_counts}, entropy={entropy.item():.3f}, log_probs={log_probs.item():.3f}"
+            )
 
     # Check final policy
     obs_test = _make_obs()
@@ -125,8 +134,7 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
     print(f"\nFinal action counts: {action_counts}")
     print(f"Final policy probs: {probs}")
 
-    assert probs[target_action] > threshold, \
-        f"Agent should prefer action {target_action}, but probs={probs}"
+    assert probs[target_action] > threshold, f"Agent should prefer action {target_action}, but probs={probs}"
 
 
 @pytest.mark.parametrize("life_loss_every", [8])
@@ -164,8 +172,11 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
 
         # Update agent
         agent.update(
-            obs[np.newaxis], actions, [reward],
-            next_obs[np.newaxis], [done],
+            obs[np.newaxis],
+            actions,
+            [reward],
+            next_obs[np.newaxis],
+            [done],
         )
 
         # Reset on terminal
@@ -175,8 +186,7 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
         obs = next_obs
 
         if t % 32 == 0:
-            print(f"Step {t}: action={action}, reward={reward:.1f}, "
-                  f"done={done}, counts={action_counts}")
+            print(f"Step {t}: action={action}, reward={reward:.1f}, " f"done={done}, counts={action_counts}")
 
     # Check final policy
     obs_test = _make_obs()
@@ -187,8 +197,9 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
     print(f"\nFinal action counts: {action_counts}")
     print(f"Final policy probs: {probs}")
 
-    assert probs[target_action] > threshold, \
-        f"Agent should prefer action {target_action} despite terminals, but probs={probs}"
+    assert (
+        probs[target_action] > threshold
+    ), f"Agent should prefer action {target_action} despite terminals, but probs={probs}"
 
 
 def test_value_function_learns_returns():
@@ -228,8 +239,11 @@ def test_value_function_learns_returns():
 
         # Update agent and track advantage
         metrics = agent.update(
-            obs[np.newaxis], actions, [reward],
-            next_obs[np.newaxis], [done],
+            obs[np.newaxis],
+            actions,
+            [reward],
+            next_obs[np.newaxis],
+            [done],
         )
 
         advantages.append(metrics["advantage"])
@@ -260,8 +274,9 @@ def test_value_function_learns_returns():
     print(f"Improvement: {early_mean_abs - late_mean_abs:.3f}")
 
     # Value function should improve (advantages should decrease in magnitude)
-    assert late_mean_abs < early_mean_abs, \
-        f"Value function should learn: late advantages ({late_mean_abs:.3f}) should be smaller than early ({early_mean_abs:.3f})"
+    assert (
+        late_mean_abs < early_mean_abs
+    ), f"Value function should learn: late advantages ({late_mean_abs:.3f}) should be smaller than early ({early_mean_abs:.3f})"
 
 
 def test_lifetime_return_error_decreases():
@@ -287,8 +302,11 @@ def test_lifetime_return_error_decreases():
 
         # Deterministic reward, no terminals
         metrics = agent.update(
-            obs[np.newaxis], actions, [true_return],
-            obs[np.newaxis], [False],
+            obs[np.newaxis],
+            actions,
+            [true_return],
+            obs[np.newaxis],
+            [False],
         )
 
         # Lifetime error proxy: squared error of current value prediction
@@ -304,8 +322,9 @@ def test_lifetime_return_error_decreases():
     late_error = np.mean(errors[-50:])
 
     print(f"\nLifetime error decrease: early={early_error:.4f}, late={late_error:.4f}")
-    assert late_error < early_error, \
-        f"Lifetime return error should decrease: early={early_error:.4f}, late={late_error:.4f}"
+    assert (
+        late_error < early_error
+    ), f"Lifetime return error should decrease: early={early_error:.4f}, late={late_error:.4f}"
 
 
 if __name__ == "__main__":
