@@ -3,6 +3,7 @@
 Load PPO model from unzipped .pth files and re-save with numpy 1.x compatibility
 Uses the already-extracted policy.pth, policy.optimizer.pth files
 """
+
 import os
 import torch
 import gymnasium as gym
@@ -14,6 +15,7 @@ from stable_baselines3.common.vec_env import VecFrameStack
 # Register ALE environments
 gym.register_envs(ale_py)
 
+
 def create_matching_env(env_name="ALE/MsPacman-v5"):
     """
     Create environment with EXACT same settings as training
@@ -24,7 +26,7 @@ def create_matching_env(env_name="ALE/MsPacman-v5"):
         n_envs=1,
         seed=0,
         env_kwargs={'full_action_space': True},  # 18 actions
-        wrapper_kwargs={"screen_size": 128}  # 128x128
+        wrapper_kwargs={"screen_size": 128},  # 128x128
     )
     env = VecFrameStack(env, n_stack=16)  # 16 frames stacked (matching your training)
 
@@ -33,6 +35,7 @@ def create_matching_env(env_name="ALE/MsPacman-v5"):
     print(f"  Action space: {env.action_space.n} actions")
 
     return env
+
 
 def main():
     print("=" * 70)
@@ -59,7 +62,7 @@ def main():
         "CnnPolicy",
         env,
         device="cpu",  # Use CPU for loading to avoid CUDA issues
-        verbose=1
+        verbose=1,
     )
 
     # Load the saved weights
@@ -97,6 +100,7 @@ def main():
     print("\nUse in harness_physical.py with:")
     print("  --load_model=ppo_10m_numpy1")
     print()
+
 
 if __name__ == "__main__":
     main()

@@ -26,55 +26,21 @@ from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.env_util import make_atari_env
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecEnvWrapper, VecFrameStack, VecMonitor, VecVideoRecorder
+from stable_baselines3.common.vec_env import VecEnvWrapper, VecFrameStack, VecMonitor, VecVideoRecorder
 from wandb.integration.sb3 import WandbCallback
 
 import wandb
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wrap'))
-from wrapper_v0_2 import LatencyModel, BatchedLatencyModel
+from wrapper_v0_2 import BatchedLatencyModel
 
 # Register ALE environments
 gym.register_envs(ale_py)
 
 
-class ActionSetWrapper(gym.Wrapper):
-    """
-    Wrapper to restrict the action space similar to agent_delay_target.py logic.
-
-    Supports three modes:
-    - reduce_action_set=0: Full legal action set (18 actions)
-    - reduce_action_set=1: ALE minimal action set per game
-    - reduce_action_set=2: Further restricted for ms_pacman/qbert (4 directional actions: UP, DOWN, LEFT, RIGHT)
-    """
-
-    def __init__(self, env, reduce_action_set=1, game_name=""):
-        super().__init__(env)
-        self.reduce_action_set = reduce_action_set
-        self.game_name = game_name.lower()
-
-        if reduce_action_set == 0:
-            self.action_mapping = None
-        elif reduce_action_set == 2:
-            # ALE action indices: UP=2, DOWN=5, LEFT=4, RIGHT=3
-            self.action_mapping = [2, 5, 4, 3]  # UP, DOWN, LEFT, RIGHT
-            print(f"[ActionSetWrapper] Restricting {game_name} to 4 directional actions only")
-        else:
-            self.action_mapping = None
-
-        # Update action space if we have a custom mapping
-        if self.action_mapping is not None:
-            self.action_space = spaces.Discrete(len(self.action_mapping))
-            print(f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}")
-
-    def step(self, action):
-        # Map the restricted action to the full action space if needed
-        if self.action_mapping is not None:
-            action = self.action_mapping[action]
-        return self.env.step(action)
-
 class VecActionSetWrapper(VecEnvWrapper):
     """Vectorized wrapper for action set restriction"""
+
     def __init__(self, venv, action_mapping):
         super().__init__(venv)
         self.action_mapping = action_mapping
@@ -91,53 +57,6 @@ class VecActionSetWrapper(VecEnvWrapper):
 
     def reset(self):
         return self.venv.reset()
-
-
-class LatencyWrapper(gym.Wrapper):
-    """
-    Gymnasium wrapper that applies the LatencyModel to simulate hardware latency.
-
-    The LatencyModel maintains a history of the past 30 actions and uses a neural
-    network to predict which action should actually be executed, simulating the
-    real-world delay between action selection and execution.
-    """
-
-    def __init__(self, env, latency_model_dir):
-        """
-        Args:
-            env: The Gymnasium environment to wrap
-            latency_model_dir: Directory containing the LatencyModel weights
-        """
-        super().__init__(env)
-        self.latency_model = LatencyModel(directory_with_weights=latency_model_dir)
-        print(f"[LatencyWrapper] Initialized with weights from {latency_model_dir}")
-
-    def step(self, action):
-        """
-        Step function with latency simulation.
-
-        Args:
-            action: The action selected by the agent
-
-        Returns:
-            obs, reward, terminated, truncated, info
-        """
-        # Convert action to ALE action format and apply latency model
-        ale_action = ale_py.Action(int(action))
-        delayed_action = self.latency_model.act(ale_action)
-
-        # Execute the delayed action in the environment
-        return self.env.step(int(delayed_action))
-
-    def reset(self, **kwargs):
-        """Reset the environment and latency model state"""
-        # Reset the latency model's action queue to NOOPs
-        self.latency_model.action_queue = []
-        for _ in range(30):
-            self.latency_model.action_queue.append(self.latency_model._LatencyModel__one_hot_encode(0, 0, 36))
-        self.latency_model.last_action = 0
-
-        return self.env.reset(**kwargs)
 
 
 class VecLatencyWrapper:
@@ -243,7 +162,9 @@ def create_atari_env_with_latency(
 
     # Create base Atari environment with standard preprocessing
     env = make_atari_env(
-        env_name, n_envs=n_envs, seed=seed,
+        env_name,
+        n_envs=n_envs,
+        seed=seed,
         env_kwargs={'full_action_space': use_full_action_space},
         wrapper_kwargs={"screen_size": 128},
         # vec_env_cls=SubprocVecEnv
@@ -252,10 +173,10 @@ def create_atari_env_with_latency(
     # Determine if we need action mapping for reduced action set
     action_mapping = None
     if reduce_action_set == 2:
-            # Action mapping: agent uses indices 0-3, which map to ALE actions [2, 5, 4, 3]
-            # 0: UP, 1: DOWN, 2: LEFT, 3: RIGHT (matching agent_delay_target.py)
-            action_mapping = [2, 5, 4, 3]
-            print(f"[ActionRestriction] Will use reduced action space")
+        # Action mapping: agent uses indices 0-3, which map to ALE actions [2, 5, 4, 3]
+        # 0: UP, 1: DOWN, 2: LEFT, 3: RIGHT (matching agent_delay_target.py)
+        action_mapping = [2, 5, 4, 3]
+        print(f"[ActionRestriction] Will use reduced action space")
 
     # Apply latency wrapper BEFORE frame stacking
     # The latency wrapper now handles action mapping internally
