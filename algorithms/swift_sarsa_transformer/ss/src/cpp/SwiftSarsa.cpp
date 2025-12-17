@@ -48,6 +48,41 @@ SwiftSarsa::SwiftSarsa(int num_of_features, int num_of_actions, float lambda_ini
 }
 
 
+void SwiftSarsa::set_weights(const std::vector<float>& weights, const std::vector<float>& beta_values, const std::vector<float>& last_alpha_values)
+{
+    // Validate sizes match
+    if (weights.size() != this->w.size() || beta_values.size() != this->beta.size() || last_alpha_values.size() != this->last_alpha.size())
+    {
+        // Sizes don't match - this is an error condition
+        // In production code, you might want to throw an exception here
+        return;
+    }
+
+    // Copy weights
+    this->w = weights;
+    this->beta = beta_values;
+    this->last_alpha = last_alpha_values;
+
+    // Reset eligibility traces and derived state for a clean start
+    std::fill(this->z.begin(), this->z.end(), 0.0f);
+    std::fill(this->z_delta.begin(), this->z_delta.end(), 0.0f);
+    std::fill(this->delta_w.begin(), this->delta_w.end(), 0.0f);
+    std::fill(this->h.begin(), this->h.end(), 0.0f);
+    std::fill(this->h_old.begin(), this->h_old.end(), 0.0f);
+    std::fill(this->h_temp.begin(), this->h_temp.end(), 0.0f);
+    std::fill(this->z_bar.begin(), this->z_bar.end(), 0.0f);
+    std::fill(this->p.begin(), this->p.end(), 0.0f);
+
+    // Clear the set of eligible components
+    this->set_of_eligible_components.clear();
+
+    // Reset value tracking
+    this->v_old = 0.0f;
+    this->v_delta = 0.0f;
+    this->last_delta = 0.0f;
+}
+
+
 std::vector<float> SwiftSarsa::get_action_values(std::vector<std::pair<int, float>>& feature_indices) const
 {
     auto action_values = std::vector<float>(this->action_feature_indices.size(), 0);

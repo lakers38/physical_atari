@@ -46,6 +46,7 @@ def train_function(
     online_batch,
     online_loss_scale,
     use_weight_norm,
+    training_enabled,
     reward_discounts,
     value_discounts,
     # variable inputs
@@ -118,7 +119,11 @@ def train_function(
         observation_stacks = observation_stacks.to(next(training_model.parameters()).dtype) / 255.0
 
     # evaluate the model with gradients
-    train_values = training_model(observation_stacks)
+    if training_enabled:
+        train_values = training_model(observation_stacks)
+    else:
+        with torch.no_grad():
+            train_values = training_model(observation_stacks)
     num_model_distributions = train_values.shape[1]
 
     with torch.no_grad():
@@ -177,6 +182,9 @@ def train_function(
         training_targets = return_targets.view(train_batch, 1)
         # pytorch gives a warning if we just let this broadcast
         training_targets = training_targets.expand(train_batch, num_model_distributions)
+
+    if not training_enabled:
+        return
 
     loss_individual = F.mse_loss(train_values, training_targets, reduction='none')
     distribution_factors[online_batch : online_batch * 2] *= online_loss_scale
@@ -431,6 +439,7 @@ class Agent:
         # training
         self.use_softv = 1  # v from softmax q
         self.use_weight_norm = 1
+        self.training_enabled = False  # hardcoded eval toggle; set True to train
         self.repeat_train = 1  # repeat the training multiple times with the same target
         self.min_train_frames = 256  # minimum is input_stack + multisteps, but waiting a little longer may avoid overtraining the first few frames
 
@@ -694,6 +703,7 @@ class Agent:
                 self.online_batch,
                 self.online_loss_scale,
                 self.use_weight_norm,
+                self.training_enabled,
                 self.reward_discounts,
                 self.value_discounts,
                 # variable state

@@ -279,6 +279,7 @@ class SACAgent:
             # Lower target for online learning stability
             if target_entropy is None:
                 self.target_entropy = -np.log(1.0 / num_actions) * 0.5
+                print(f"SETTING TARGET ENTROPY TO: {self.target_entropy}")
             else:
                 self.target_entropy = target_entropy
 

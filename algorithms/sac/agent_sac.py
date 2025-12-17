@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from collections import deque
 from typing import Optional
+import time
 
 try:
     import wandb
@@ -38,7 +39,6 @@ class Agent:
         # SAC hyperparameters (can be overridden via kwargs)
         self.learning_rate = kwargs.get('learning_rate', 1e-4)
         self.gamma = kwargs.get('gamma', 0.99)
-        self.entropy_coef = kwargs.get('entropy_coef', 0.01)
         self.feature_dim = kwargs.get('feature_dim', 512)
         self.actor_hidden_dim = kwargs.get('actor_hidden_dim', 256)
         self.value_hidden_dim = kwargs.get('value_hidden_dim', 256)
@@ -53,7 +53,7 @@ class Agent:
 
         # Training settings
         self.update_freq = kwargs.get('update_freq', 1)  # Gradient step cadence (every frame_skip * update_freq env frames)
-        self.batch_size = kwargs.get('batch_size', 32)
+        self.batch_size = kwargs.get('batch_size', 64)
         self.buffer_size = kwargs.get('buffer_size', 100_000)
         self.learning_starts = kwargs.get('learning_starts', 10_000)
         self.gradient_steps = kwargs.get('gradient_steps', 1)
@@ -80,7 +80,6 @@ class Agent:
         logger.info(f"agent_sac: Configuration:")
         logger.info(f"  learning_rate={self.learning_rate}")
         logger.info(f"  gamma={self.gamma}")
-        logger.info(f"  entropy_coef={self.entropy_coef}")
         logger.info(f"  frame_skip={self.frame_skip}")
         logger.info(f"  n_stack={self.n_stack}")
         logger.info(f"  obs_size={self.obs_height}x{self.obs_width}")
@@ -107,8 +106,8 @@ class Agent:
             device=device,
             gamma=self.gamma,
             learning_rate=self.learning_rate,
-            entropy_coef=self.entropy_coef,
             fail_on_nonfinite=False,  # Don't crash on NaN during physical runs
+            auto_entropy_tuning=True,
         )
 
         # Load model if specified
@@ -122,8 +121,10 @@ class Agent:
             self.sac_agent.actor.eval()
             logger.info(f"agent_sac: Running in EVALUATION MODE (training disabled)")
         else:
+            
             self.sac_agent.cnn.train()
             self.sac_agent.actor.train()
+            
 
         # Frame buffering (stack n_stack frames)
         self.frame_buffer = deque(maxlen=self.n_stack)
@@ -273,6 +274,9 @@ class Agent:
                                     "train/value_pred": metrics['value_pred'],
                                     "train/value_next": metrics['value_next'],
                                     "train/value_target": metrics['value_target'],
+                                    "train/policy_entropy": metrics['policy_entropy'],
+                                    "train/alpha": metrics['alpha'],
+                                    "train/alpha_loss": metrics['alpha_loss'],
                                     "train/training_step": self.training_step,
                                 }, step=self.step_count)
                 except Exception as e:

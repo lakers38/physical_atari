@@ -126,6 +126,7 @@ class Agent:
 
         # Model settings - MUST match training config from train_agent_ppo_sim.py
         self.load_file = None  # Path to load pretrained model (consistent with harness)
+        self.eval_mode = False  # If True, disable training (evaluation only)
         self.use_grayscale = True   # Convert RGB to grayscale
         self.n_stack = 4  # Number of frames to stack (matches sim training)
         self.obs_height = 84  # Observation height (matches sim training)
@@ -319,6 +320,8 @@ class Agent:
         # self._last_add_pos = None
 
         logger.info(f"agent_ppo: Initialized successfully")
+        if self.eval_mode:
+            logger.info(f"agent_ppo: Running in EVALUATION MODE (training disabled)")
         logger.info(f"agent_ppo: Rollout buffer size = {self.n_steps}")
         logger.info(f"agent_ppo: Entropy coefficient schedule: {self.ent_coef_initial} -> {self.ent_coef_final}")
 
@@ -399,8 +402,8 @@ class Agent:
         done = end_of_episode >= 1
         
 
-        # If we have a previous transition, add it to the buffer
-        if self.last_obs is not None and not self.is_training and self.last_value is not None and self.last_log_prob is not None:
+        # If we have a previous transition, add it to the buffer (skip if eval_mode)
+        if not self.eval_mode and self.last_obs is not None and not self.is_training and self.last_value is not None and self.last_log_prob is not None:
             # Add transition: (last_obs, last_action, last_reward, last_episode_start, last_value, last_log_prob)
             self.rollout_buffer.add(
                 obs=self.last_obs,
@@ -463,9 +466,9 @@ class Agent:
         self.accumulated_reward = 0  # Reset for next frame_skip window
         self.prev_done = done  # Track done for next step's episode_start
 
-        # Train when buffer is full
+        # Train when buffer is full (skip if eval_mode)
         # ASYNC TRAINING: Launch training in background thread so actor stays responsive
-        if self.frames_since_train >= self.n_steps and not self.is_training:
+        if not self.eval_mode and self.frames_since_train >= self.n_steps and not self.is_training:
             # Compute returns and advantages BEFORE launching thread (needs current obs)
             with torch.no_grad():
                 obs_tensor = torch.as_tensor(stacked_frames).unsqueeze(0).to(self.learner_model.device)
