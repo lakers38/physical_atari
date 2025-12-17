@@ -42,19 +42,19 @@ def main(args):
 
     logger.info(f"Importing agent: {args.agent_type}")
     if args.agent_type == 'agent_delay_target':
-        from agent_delay_target import Agent
+        from algorithms.delay_target.agent_delay_target import Agent
     elif args.agent_type == 'agent_dqn':
-        from agent_dqn import Agent
+        from algorithms.dqn.agent_dqn import Agent
     elif args.agent_type == 'agent_rainbow':
-        from agent_rainbow import Agent
+        from algorithms.rainbow_dqn.agent_rainbow import Agent
     elif args.agent_type == 'agent_r2d2':
-        from agent_r2d2 import Agent
+        from algorithms.r2d2.agent_r2d2 import Agent
     elif args.agent_type == 'agent_random':
         from agent_random import Agent
     elif args.agent_type == 'agent_ppo':
         from algorithms.ppo.agent_ppo import Agent
     elif args.agent_type == 'agent_ss':
-        from agent_ss import Agent
+        from algorithms.swift_sarsa_transformer.agent_ss import Agent
     elif args.agent_type == 'agent_sac':
         from algorithms.sac.agent_sac import Agent
     else:
