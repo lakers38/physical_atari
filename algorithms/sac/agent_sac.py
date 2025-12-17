@@ -11,11 +11,7 @@ from collections import deque
 from typing import Optional
 import time
 
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+import wandb
 
 from framework.Logger import logger
 from algorithms.sac.sac import SACAgent, ReplayBuffer
@@ -67,15 +63,12 @@ class Agent:
         self.use_wandb = kwargs.get('use_wandb', False)
 
         # Validate wandb setup
-        if self.use_wandb and WANDB_AVAILABLE:
+        if self.use_wandb:
             if wandb.run is not None:
                 logger.info(f"agent_sac: Using existing wandb run from harness (run name: {wandb.run.name})")
             else:
                 logger.warning("agent_sac: Wandb requested but no run initialized. Please initialize in harness.")
                 self.use_wandb = False
-        elif self.use_wandb and not WANDB_AVAILABLE:
-            logger.warning("agent_sac: Wandb requested but not installed. Run: pip install wandb")
-            self.use_wandb = False
 
         logger.info(f"agent_sac: Configuration:")
         logger.info(f"  learning_rate={self.learning_rate}")

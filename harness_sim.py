@@ -17,12 +17,7 @@ import time
 import gymnasium as gym
 import numpy as np
 import ale_py
-
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+import wandb
 
 from framework.Logger import logger
 
@@ -83,7 +78,7 @@ def main(args):
     logger.info(f"Game: {args.game}, Actions: {num_actions}")
 
     # Initialize wandb if requested (MUST happen before agent creation)
-    if args.use_wandb and WANDB_AVAILABLE:
+    if args.use_wandb:
         config = vars(args).copy()
         config.update({
             "agent_type": args.agent_type,
@@ -104,7 +99,7 @@ def main(args):
 
     # Create agent
     agent_kwargs = {
-        'use_wandb': args.use_wandb and WANDB_AVAILABLE,
+        'use_wandb': args.use_wandb,
         'n_steps': args.n_steps,
         'batch_size': args.batch_size,
         'n_epochs': args.n_epochs,
@@ -178,7 +173,7 @@ def main(args):
             )
 
             # Log to wandb
-            if args.use_wandb and WANDB_AVAILABLE:
+            if args.use_wandb:
                 wandb.log({
                     "rollout/ep_rew_mean": avg_reward,
                     "rollout/ep_len_mean": avg_length,
@@ -205,7 +200,7 @@ def main(args):
 
     env.close()
 
-    if args.use_wandb and WANDB_AVAILABLE:
+    if args.use_wandb:
         wandb.finish()
 
     logger.info("Training complete!")

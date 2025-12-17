@@ -12,13 +12,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.buffers import RolloutBuffer
-
-try:
-    import wandb
-
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+import wandb
 
 from framework.Logger import logger
 
@@ -126,16 +120,13 @@ class Agent:
             else:
                 logger.warning(f"agent_ppo: Unknown parameter {key}")
 
-        if self.use_wandb and WANDB_AVAILABLE:
+        if self.use_wandb:
             if wandb.run is not None:
                 logger.info(f"agent_ppo: Using existing wandb run from harness (run name: {wandb.run.name})")
                 logger.info(f"agent_ppo: Will log train/ metrics every {self.n_steps} steps")
             else:
                 logger.warning("agent_ppo: Wandb requested but no run initialized. Please initialize in harness.")
                 self.use_wandb = False
-        elif self.use_wandb and not WANDB_AVAILABLE:
-            logger.warning("agent_ppo: Wandb requested but not installed. Run: pip install wandb")
-            self.use_wandb = False
 
         self.policy_num_actions = num_actions
 

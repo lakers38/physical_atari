@@ -3,11 +3,13 @@
 import os
 import time
 import threading
+import glob
 from copy import deepcopy
 from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import wandb
 from .model import Network
 from .actor import calculate_mixed_td_errors
 from . import config
@@ -266,12 +268,7 @@ class Learner:
                     except:
                         break
 
-                # Log to wandb
-                try:
-                    import wandb
-                    wandb.log(metrics, step=self.num_updates)
-                except ImportError:
-                    pass  # wandb not available
+                wandb.log(metrics, step=self.num_updates)
 
             # Store new weights in shared memory
             if self.num_updates % 4 == 0:
@@ -309,12 +306,8 @@ class Learner:
                     if eval_reward is not None:
                         print(f"Evaluation episode reward: {eval_reward:.2f}")
 
-                        # Log video to wandb
                         if self.use_wandb:
                             try:
-                                import wandb
-                                import glob
-
                                 # Find the recorded video file with the specific prefix
                                 prefix = f"eval_step_{self.num_updates}"
                                 video_files = glob.glob(os.path.join(self.video_dir, f"{prefix}*.mp4"))

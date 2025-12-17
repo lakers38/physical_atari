@@ -17,6 +17,7 @@ import ale_py
 import numpy as np
 import torch
 from coolname import generate_slug
+import wandb
 
 
 # Import R2D2 components
@@ -33,15 +34,6 @@ from environment import create_env
 
 # Register ALE environments
 gym.register_envs(ale_py)
-
-# WandB integration (optional)
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-    wandb = None
-
 
 def load_checkpoint(checkpoint_path, model, device='cpu'):
     """
@@ -147,7 +139,7 @@ def train_agent_distributed(
     print(f"{'='*60}\n")
 
     # Initialize wandb
-    if use_wandb and WANDB_AVAILABLE:
+    if use_wandb:
         wandb.init(
             project=wandb_project,
             entity=wandb_entity,
@@ -247,7 +239,7 @@ def train_agent_distributed(
         model=shared_model,
         game_name=env_name,
         models_dir=os.path.join(experiment_dir, "models"),
-        use_wandb=(use_wandb and WANDB_AVAILABLE),
+        use_wandb=use_wandb,
         env_name=env_name,
         video_dir=video_dir,
         initial_num_updates=initial_num_updates
@@ -303,7 +295,7 @@ def train_agent_distributed(
         print(f"\nTraining complete!")
 
     # Cleanup wandb
-    if use_wandb and WANDB_AVAILABLE:
+    if use_wandb:
         wandb.finish()
         print("✓ WandB run finished")
 

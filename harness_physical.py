@@ -24,11 +24,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+import wandb
 
 from framework.Logger import add_file_handler_to_logger, logger
 
@@ -195,7 +191,7 @@ def main(args):
                 logger.debug(f'{num_actions} actions: {action_set}')
 
                 # Initialize wandb if requested (must be before agent creation)
-                if args.wandb and WANDB_AVAILABLE:
+                if args.wandb:
                     game_name = os.path.splitext(os.path.basename(args.game_config))[0]
                     # Use experiment directory (second-to-last in run path) to avoid long names
                     run_name_suffix = os.path.basename(os.path.dirname(run_dir))
@@ -212,8 +208,6 @@ def main(args):
                         }
                     )
                     logger.info("harness: Wandb logging enabled for all metrics")
-                elif args.wandb and not WANDB_AVAILABLE:
-                    logger.warning("harness: Wandb requested but not installed. Run: pip install wandb")
 
                 # Init a fresh model.
                 if args.agent_type == 'agent_delay_target':
@@ -497,7 +491,7 @@ def main(args):
                     current_episode_length += 1
 
                     # Log to wandb on episode end
-                    if end_of_episode > 1 and args.wandb and WANDB_AVAILABLE:
+                    if end_of_episode > 1 and args.wandb:
                         avg_score = episode_avg if episode_avg != -999 else 0
                         avg_reward = avg_score  # rewards and scores are equivalent in this harness
                         wandb.log({
@@ -518,7 +512,7 @@ def main(args):
                         current_episode_length = 0
 
                     # Periodically log action distribution and FPS
-                    if u % 100 == 0 and args.wandb and WANDB_AVAILABLE:
+                    if u % 100 == 0 and args.wandb:
                         # Log action distribution (percentage of each action) with names
                         action_distribution = action_counts / (action_counts.sum() + 1e-8)
                         action_log = {

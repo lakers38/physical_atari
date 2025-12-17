@@ -27,15 +27,8 @@ from stable_baselines3.common.vec_env import VecFrameStack, VecMonitor, VecVideo
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from gymnasium import spaces
 
-# WandB integration (optional)
-try:
-    import wandb
-    from wandb.integration.sb3 import WandbCallback
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-    wandb = None
-    WandbCallback = None
+import wandb
+from wandb.integration.sb3 import WandbCallback
 
 # Import the latency model
 sys.path.append(os.path.join(os.path.dirname(__file__), 'latency_wrap'))
@@ -264,40 +257,35 @@ def train_agent(
     # Initialize WandB if requested
     wandb_run = None
     if use_wandb:
-        if not WANDB_AVAILABLE:
-            print("WARNING: WandB not installed. Install with: pip install wandb")
-            print("Continuing without WandB logging...")
-        else:
-            # Create config dict for WandB
-            config = {
-                "env_name": env_name,
-                "total_timesteps": total_timesteps,
-                "simulate_latency": simulate_latency,
-                "learning_rate": learning_rate,
-                "n_steps": n_steps,
-                "batch_size": batch_size,
-                "n_epochs": n_epochs,
-                "gamma": 0.99,
-                "gae_lambda": 0.95,
-                "clip_range": 0.1,
-                "ent_coef": 0.01,
-                "vf_coef": 0.5,
-                "device": device,
-                "algorithm": "PPO",
-                "phase": "Phase 2 - Latency" if simulate_latency else "Phase 1 - No Latency",
-            }
+        config = {
+            "env_name": env_name,
+            "total_timesteps": total_timesteps,
+            "simulate_latency": simulate_latency,
+            "learning_rate": learning_rate,
+            "n_steps": n_steps,
+            "batch_size": batch_size,
+            "n_epochs": n_epochs,
+            "gamma": 0.99,
+            "gae_lambda": 0.95,
+            "clip_range": 0.1,
+            "ent_coef": 0.01,
+            "vf_coef": 0.5,
+            "device": device,
+            "algorithm": "PPO",
+            "phase": "Phase 2 - Latency" if simulate_latency else "Phase 1 - No Latency",
+        }
 
-            wandb_run = wandb.init(
-                project=wandb_project,
-                entity=wandb_entity,
-                name=wandb_run_name,
-                config=config,
-                sync_tensorboard=True,  # Auto-upload TensorBoard metrics
-                monitor_gym=True,       # Auto-upload videos
-                save_code=True,
-            )
-            print(f"[WandB] Initialized run: {wandb_run.name}")
-            print(f"[WandB] View at: {wandb_run.url}")
+        wandb_run = wandb.init(
+            project=wandb_project,
+            entity=wandb_entity,
+            name=wandb_run_name,
+            config=config,
+            sync_tensorboard=True,  # Auto-upload TensorBoard metrics
+            monitor_gym=True,       # Auto-upload videos
+            save_code=True,
+        )
+        print(f"[WandB] Initialized run: {wandb_run.name}")
+        print(f"[WandB] View at: {wandb_run.url}")
 
     # Create environments
     monitor_path = os.path.join(experiment_dir, "logs", "monitor") if experiment_dir else None
@@ -382,7 +370,7 @@ def train_agent(
     callbacks = [checkpoint_callback, eval_callback]
 
     # Add WandB callback if enabled
-    if use_wandb and WANDB_AVAILABLE and wandb_run is not None:
+    if use_wandb and wandb_run is not None:
         wandb_callback = WandbCallback(
             model_save_path=os.path.join(experiment_dir, "models", f"wandb_{wandb_run.id}") if experiment_dir else f"./models/wandb_{wandb_run.id}",
             verbose=2,
