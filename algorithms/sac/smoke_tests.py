@@ -1,54 +1,24 @@
-"""
-Smoke tests for the soft actor-critic style agent.
-
-Tests basic learning capabilities on simple bandit-style problems.
-"""
-
-import os
-import sys
+"""Smoke tests for SAC."""
 
 import numpy as np
 import torch
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from agent_actor_critic import SACAgent
-
-try:
-    import pytest
-
-    PYTEST_AVAILABLE = True
-except ImportError:
-    PYTEST_AVAILABLE = False
-
-    class DummyMark:
-        @staticmethod
-        def parametrize(*args, **kwargs):
-            def decorator(func):
-                return func
-
-            return decorator
-
-    class DummyPytest:
-        mark = DummyMark()
-
-    pytest = DummyPytest()
+from algorithms.sac.sac import SACAgent
 
 
 def _make_agent(overrides=None):
-    """Create an agent with default params for testing."""
     params = dict(
         num_actions=4,
-        feature_dim=512,
-        actor_hidden_dim=256,
-        value_hidden_dim=256,
+        feature_dim=64,
+        actor_hidden_dim=64,
+        value_hidden_dim=64,
         n_stack=4,
-        input_size=128,
+        input_size=84,
         device='cpu',
         gamma=0.0,
-        learning_rate=1e-3,
-        entropy_coef=0.1,
-        value_coef=0.5,
+        learning_rate=3e-3,
+        entropy_coef=0.0,
+        auto_entropy_tuning=False,
     )
 
     if overrides:
@@ -62,20 +32,14 @@ _CACHED_OBS = None
 
 
 def _make_obs():
-    """Create a dummy observation (128x128x1 single grayscale frame)."""
     global _CACHED_OBS
     if _CACHED_OBS is None:
-        _CACHED_OBS = np.ones((128, 128, 4), dtype=np.uint8) * 128
+        _CACHED_OBS = np.ones((84, 84, 4), dtype=np.uint8) * 128
     return _CACHED_OBS.copy()
 
 
-@pytest.mark.parametrize("reward_prob,threshold,steps", [(1.0, 0.5, 256)])
-def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
-    """
-    Test that the agent learns to prefer the rewarded action in a bandit setting.
-
-    Reward action 0 with high probability, expect policy to converge to action 0.
-    """
+def test_bandit_prefers_rewarded_action():
+    reward_prob, threshold, steps = 1.0, 0.5, 256
     np.random.seed(0)
     torch.manual_seed(0)
 
@@ -125,11 +89,8 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
     assert probs[target_action] > threshold, f"Agent should prefer action {target_action}, but probs={probs}"
 
 
-@pytest.mark.parametrize("life_loss_every", [8])
-def test_bandit_with_life_loss_terminals(life_loss_every):
-    """
-    Test that learning survives frequent terminals (life loss) and still prefers rewarded action.
-    """
+def test_bandit_with_life_loss_terminals():
+    life_loss_every = 8
     reward_prob, threshold, steps = 1.0, 0.5, 256
     np.random.seed(1)
     torch.manual_seed(1)
@@ -184,12 +145,6 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
 
 
 def test_value_function_learns_returns():
-    """
-    Test that the value function (critic) learns to predict returns accurately.
-
-    In a deterministic bandit where action 0 gives reward +1 and others give 0,
-    the advantages should converge toward zero as V(s) learns the expected return.
-    """
     np.random.seed(2)
     torch.manual_seed(2)
 
@@ -200,8 +155,7 @@ def test_value_function_learns_returns():
     obs = _make_obs()
     agent.start_episodes(obs[np.newaxis])
 
-    advantages = []
-    recent_advantages = []
+    q_values = []
 
     for t in range(steps):
         actions, _log_probs, _entropy, _ = agent.select_actions(obs[np.newaxis])
@@ -210,7 +164,9 @@ def test_value_function_learns_returns():
         reward = 1.0 if action == target_action else 0.0
 
         with torch.no_grad():
-            v_pred = agent.value_head(feats).mean().item()
+            feats_t, _ = agent._extract_features(obs[np.newaxis])
+            q = agent.q1(feats_t).detach().cpu().numpy()[0]
+            q_values.append(q)
 
         next_obs = _make_obs()
         done = False
@@ -223,47 +179,32 @@ def test_value_function_learns_returns():
             [done],
         )
 
-        advantages.append(metrics["advantage"])
-        recent_advantages.append(metrics["advantage"])
-        if len(recent_advantages) > 50:
-            recent_advantages.pop(0)
-
         obs = next_obs
 
         if t % 64 == 0:
-            recent_mean = np.mean(recent_advantages)
-            recent_std = np.std(recent_advantages)
+            q = q_values[-1]
             print(
                 f"Step {t}: action={action}, reward={reward:.1f}, "
-                f"V_pred={v_pred:.3f}, advantage={metrics['advantage']:.3f}, "
-                f"recent_adv_mean={recent_mean:.3f}±{recent_std:.3f}"
+                f"q_target={metrics['value_target']:.3f}, q_taken={metrics['value_pred']:.3f}, "
+                f"q={q}"
             )
 
-    early_advantages = advantages[:50]
-    late_advantages = advantages[-50:]
+    early_q = np.mean([q[target_action] for q in q_values[:50]])
+    late_q = np.mean([q[target_action] for q in q_values[-50:]])
 
-    early_mean_abs = np.mean(np.abs(early_advantages))
-    late_mean_abs = np.mean(np.abs(late_advantages))
-
-    print(f"\nEarly advantage magnitude: {early_mean_abs:.3f}")
-    print(f"Late advantage magnitude: {late_mean_abs:.3f}")
-    print(f"Improvement: {early_mean_abs - late_mean_abs:.3f}")
+    print(f"\nEarly Q(target): {early_q:.3f}")
+    print(f"Late Q(target): {late_q:.3f}")
 
     assert (
-        late_mean_abs < early_mean_abs
-    ), f"Value function should learn: late advantages ({late_mean_abs:.3f}) should be smaller than early ({early_mean_abs:.3f})"
+        late_q > early_q
+    ), f"Q(target) should increase: early={early_q:.3f}, late={late_q:.3f}"
 
 
 def test_lifetime_return_error_decreases():
-    """
-    Approximate lifetime error by tracking the squared error between the critic's
-    prediction V(s) and the true one-step return in a deterministic bandit
-    (reward=+1 every step, gamma=0). The cumulative error should shrink over training.
-    """
     np.random.seed(3)
     torch.manual_seed(3)
 
-    agent = _make_agent(overrides=dict(gamma=0.0, entropy_coef=0.0, value_coef=1.0))
+    agent = _make_agent(overrides=dict(gamma=0.0, entropy_coef=0.0, auto_entropy_tuning=False))
     obs = _make_obs()
     agent.start_episodes(obs[np.newaxis])
 
@@ -305,11 +246,11 @@ if __name__ == "__main__":
     print("=" * 60)
 
     print("\n[Test 1/3] Bandit prefers rewarded action...")
-    test_bandit_prefers_rewarded_action(1.0, 0.5, 256)
+    test_bandit_prefers_rewarded_action()
     print("✓ PASSED")
 
     print("\n[Test 2/3] Bandit with life loss terminals...")
-    test_bandit_with_life_loss_terminals(8)
+    test_bandit_with_life_loss_terminals()
     print("✓ PASSED")
 
     print("\n[Test 3/3] Value function learns returns...")

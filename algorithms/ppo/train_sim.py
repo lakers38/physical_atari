@@ -32,7 +32,6 @@ from wandb.integration.sb3 import WandbCallback
 
 from utils.latency_wrap.wrapper_v0_2 import BatchedLatencyModel
 
-# Register ALE environments
 gym.register_envs(ale_py)
 
 
@@ -42,11 +41,9 @@ class VecActionSetWrapper(VecEnvWrapper):
     def __init__(self, venv, action_mapping):
         super().__init__(venv)
         self.action_mapping = action_mapping
-        # Update action space
         self.action_space = spaces.Discrete(len(action_mapping))
 
     def step_async(self, actions):
-        # Map restricted actions to full action space
         mapped_actions = np.array([self.action_mapping[a] for a in actions])
         self.venv.step_async(mapped_actions)
 
@@ -76,28 +73,23 @@ class VecLatencyWrapper:
         self.observation_space = venv.observation_space
         self.action_mapping = action_mapping
 
-        # If using action mapping, update action space to reduced size
         if action_mapping is not None:
             self.action_space = spaces.Discrete(len(action_mapping))
             print(f"[VecLatencyWrapper] Using action mapping: {action_mapping}")
         else:
             self.action_space = venv.action_space
 
-        # Single batched model instead of n_envs separate models
         self.latency_model = BatchedLatencyModel(latency_model_dir, self.num_envs)
         print(f"[VecLatencyWrapper] Initialized batched latency model for {self.num_envs} environments")
 
     def step_async(self, actions):
         """Apply latency model to all actions in one batched forward pass"""
-        # Map from reduced action space to full 18-action space if needed
         if self.action_mapping is not None:
             actions = np.array([self.action_mapping[int(a)] for a in actions])
         else:
             actions = np.array(actions)
 
-        # When action_mapping exists, constrain latency model to only sample from those actions
         allowed_actions = self.action_mapping if self.action_mapping is not None else None
-        # Single batched forward pass for all envs
         delayed_actions = self.latency_model.act_batch(actions, allowed_actions=allowed_actions)
 
         self.venv.step_async(delayed_actions)
@@ -154,46 +146,33 @@ def create_atari_env_with_latency(
     Returns:
         Vectorized environment with frame stacking and optional latency simulation
     """
-    # LatencyModel always needs the environment to have full 18-action space
-    # because it outputs actions in the 18-action space
     use_full_action_space = simulate_latency or (reduce_action_set == 0)
 
-    # Create base Atari environment with standard preprocessing
     env = make_atari_env(
         env_name,
         n_envs=n_envs,
         seed=seed,
         env_kwargs={'full_action_space': use_full_action_space},
         wrapper_kwargs={"screen_size": 128},
-        # vec_env_cls=SubprocVecEnv
     )
 
-    # Determine if we need action mapping for reduced action set
     action_mapping = None
     if reduce_action_set == 2:
-        # Action mapping: agent uses indices 0-3, which map to ALE actions [2, 5, 4, 3]
-        # 0: UP, 1: DOWN, 2: LEFT, 3: RIGHT (matching agent_delay_target.py)
         action_mapping = [2, 5, 4, 3]
         print("[ActionRestriction] Will use reduced action space")
 
-    # Apply latency wrapper BEFORE frame stacking
-    # The latency wrapper now handles action mapping internally
     if simulate_latency:
         print(f"[sim_lat] Applying latency simulation to {env_name}")
         env = VecLatencyWrapper(env, latency_model_dir=latency_model_dir, action_mapping=action_mapping)
     elif action_mapping is not None:
-        # If not using latency but still want reduced action set, use VecActionSetWrapper
         env = VecActionSetWrapper(env, action_mapping)
         print(f"[ActionRestriction] Applied action space reduction to {len(action_mapping)} actions: {action_mapping}")
 
-    # Apply frame stacking
     env = VecFrameStack(env, n_stack=n_stack)
 
-    # Add monitoring
     if monitor_path:
         env = VecMonitor(env, filename=os.path.join(monitor_path, f"{env_name.replace('/', '_')}_monitor.csv"))
 
-    # Add video recording
     if record_video and video_path:
         print(f"[Video] Recording videos every {video_freq} steps to {video_path}")
         env = VecVideoRecorder(
@@ -258,7 +237,6 @@ def train_agent(
         Trained model and save path
     """
     assert experiment_dir is not None
-    # Initialize WandB if requested
     wandb_run = None
     if use_wandb:
         config = {
@@ -285,14 +263,13 @@ def train_agent(
             entity=wandb_entity,
             name=wandb_run_name,
             config=config,
-            sync_tensorboard=True,  # Auto-upload TensorBoard metrics
-            monitor_gym=True,  # Auto-upload videos
+            sync_tensorboard=True,
+            monitor_gym=True,
             save_code=True,
         )
         print(f"[WandB] Initialized run: {wandb_run.name}")
         print(f"[WandB] View at: {wandb_run.url}")
 
-    # Create environments
     monitor_path = os.path.join(experiment_dir, "logs", "monitor") if experiment_dir else None
     video_path = os.path.join(experiment_dir, "videos") if experiment_dir and record_videos else None
 
@@ -326,13 +303,11 @@ def train_agent(
         n_stack=n_stack,
     )
 
-    # Create or load PPO model
     tensorboard_log_dir = os.path.join(experiment_dir, "logs", "tensorboard") if experiment_dir else "./logs/"
 
     if load_model_path and os.path.exists(load_model_path):
         print(f"Loading pre-trained model from {load_model_path}")
         model = PPO.load(load_model_path, env=env, device=device)
-        # Update learning rate if specified
         if learning_rate:
             model.learning_rate = learning_rate
     else:
@@ -355,7 +330,6 @@ def train_agent(
             device=device,
         )
 
-    # Setup callbacks
     timestamp = os.path.basename(experiment_dir) if experiment_dir else datetime.now().strftime("%Y%m%d_%H%M%S")
     mode = "sim_lat" if simulate_latency else "sim"
     model_name = f"PPO_{mode}_{env_name.replace('/', '_')}_{timestamp}"
@@ -381,10 +355,8 @@ def train_agent(
         render=False,
     )
 
-    # Setup callbacks list
     callbacks = [checkpoint_callback, eval_callback]
 
-    # Add WandB callback if enabled
     if use_wandb:
         wandb_callback = WandbCallback(
             model_save_path=os.path.join(experiment_dir, "models", f"wandb_{wandb_run.id}")
@@ -395,7 +367,6 @@ def train_agent(
         callbacks.append(wandb_callback)
         print("[WandB] Callback added - models will be uploaded")
 
-    # Train the model
     mode_name = "sim_lat (with LatencyModel)" if simulate_latency else "sim (no latency)"
     print(f"\n{'=' * 60}")
     print(f"Starting Training: {mode_name}")
@@ -416,11 +387,9 @@ def train_agent(
         reset_num_timesteps=False if load_model_path else True,
     )
 
-    # Save final model
     model.save(model_save_path)
     print(f"\nTraining complete! Model saved to: {model_save_path}")
 
-    # Finish WandB run
     if use_wandb and wandb_run is not None:
         wandb_run.finish()
         print("[WandB] Run finished and uploaded")
@@ -475,15 +444,12 @@ def main():
     )
     args = parser.parse_args()
 
-    # Generate run name (mode-name-timestamp)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{timestamp}-ppo-{args.mode}-{generate_slug(2)}"
 
-    # Create experiment directory using run_name
     env_dir_name = args.env.replace('/', '_')
     experiment_dir = os.path.join(args.output_dir, args.mode, env_dir_name, run_name)
 
-    # Create directory structure
     os.makedirs(os.path.join(experiment_dir, "logs", "tensorboard"), exist_ok=True)
     os.makedirs(os.path.join(experiment_dir, "logs", "eval"), exist_ok=True)
     os.makedirs(os.path.join(experiment_dir, "logs", "monitor"), exist_ok=True)
@@ -491,7 +457,6 @@ def main():
     if not args.no_videos:
         os.makedirs(os.path.join(experiment_dir, "videos"), exist_ok=True)
 
-    # Save configuration
     config_path = os.path.join(experiment_dir, "config.txt")
     with open(config_path, "w") as f:
         f.write(f"Run name: {run_name}\n")
@@ -518,7 +483,6 @@ def main():
             f.write("\n# Model Loading\n")
             f.write(f"Loaded from: {args.load_model}\n")
 
-    # Train agent
     _model, model_path = train_agent(
         env_name=args.env,
         total_timesteps=args.timesteps,

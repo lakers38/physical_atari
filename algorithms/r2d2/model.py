@@ -1,5 +1,3 @@
-"""Neural network model for R2D2"""
-
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -12,8 +10,6 @@ from . import config
 
 @dataclass
 class AgentState:
-    """State of the agent including observation, last action, last reward, and LSTM hidden state"""
-
     obs: torch.Tensor
     action_dim: int
     last_action: torch.Tensor = field(init=False)
@@ -22,15 +18,13 @@ class AgentState:
 
     def __post_init__(self):
         self.last_action = torch.zeros((1, self.action_dim), dtype=torch.float32)
-        # Ensure obs has batch dimension: (batch, channels, height, width)
         if isinstance(self.obs, torch.Tensor):
             if self.obs.dim() == 3:
-                self.obs = self.obs.unsqueeze(0)  # Add batch dimension
+                self.obs = self.obs.unsqueeze(0)
         else:
             self.obs = torch.from_numpy(self.obs).unsqueeze(0) if self.obs.ndim == 3 else torch.from_numpy(self.obs)
 
     def update(self, obs, last_action, last_reward, hidden):
-        """Update state with new observation and action"""
         if isinstance(obs, torch.Tensor):
             self.obs = obs.unsqueeze(0) if obs.dim() == 3 else obs
         else:
@@ -42,22 +36,16 @@ class AgentState:
 
 
 class Network(nn.Module):
-    """R2D2 network with CNN feature extractor + LSTM + Dueling DQN head"""
-
     def __init__(self, action_dim, obs_shape=config.obs_shape, hidden_dim=config.hidden_dim):
         super().__init__()
 
-        # 84 x 84 grayscale input
         self.action_dim = action_dim
         self.obs_shape = obs_shape
         self.hidden_dim = hidden_dim
-
         self.max_forward_steps = config.forward_steps
 
-        # CNN feature extractor (Nature DQN architecture)
-        # Input: (4, 84, 84) - 4 stacked grayscale frames
         self.feature = nn.Sequential(
-            nn.Conv2d(4, 32, 8, 4),  # Changed from 1 to 4 channels for frame stacking
+            nn.Conv2d(4, 32, 8, 4),
             nn.ReLU(True),
             nn.Conv2d(32, 64, 4, 2),
             nn.ReLU(True),
@@ -68,10 +56,8 @@ class Network(nn.Module):
             nn.ReLU(True),
         )
 
-        # LSTM takes [features, last_action, last_reward] as input
         self.recurrent = nn.LSTM(512 + self.action_dim + 1, self.hidden_dim, batch_first=True)
 
-        # Dueling DQN head
         self.advantage = nn.Sequential(
             nn.Linear(self.hidden_dim, self.hidden_dim), nn.ReLU(True), nn.Linear(self.hidden_dim, self.action_dim)
         )
@@ -81,47 +67,16 @@ class Network(nn.Module):
         )
 
     def forward(self, state: AgentState):
-        """
-        Single-step forward pass (for inference)
-
-        Args:
-            state: AgentState with obs, last_action, last_reward, hidden_state
-
-        Returns:
-            q_value: Q-values for each action [action_dim]
-            recurrent_output: New hidden state tuple
-        """
         latent = self.feature(state.obs / 255)
-
         recurrent_input = torch.cat((latent, state.last_action, state.last_reward), dim=1)
-
         _, recurrent_output = self.recurrent(recurrent_input.unsqueeze(1), state.hidden_state)
-
         hidden = recurrent_output[0]
-
         adv = self.advantage(hidden)
         val = self.value(hidden)
         q_value = val + adv - adv.mean(1, keepdim=True)
-
-        # Squeeze all singleton dimensions: [1, 1, action_dim] -> [action_dim]
         return q_value.squeeze(), recurrent_output
 
     def calculate_q_(self, obs, last_action, last_reward, hidden_state, burn_in_steps, learning_steps, forward_steps):
-        """
-        Batch forward pass with burn-in and forward steps for n-step Q-learning
-
-        Args:
-            obs: Batched observations (batch_size, seq_len, C, H, W)
-            last_action: Batched one-hot actions (batch_size, seq_len, action_dim)
-            last_reward: Batched rewards (batch_size, seq_len, 1)
-            hidden_state: Initial LSTM hidden state
-            burn_in_steps: Steps for LSTM warm-up per sequence
-            learning_steps: Steps used for gradient computation per sequence
-            forward_steps: Steps for n-step return bootstrapping per sequence
-
-        Returns:
-            q_value: Q-values for learning steps (sum(learning_steps), action_dim)
-        """
         batch_size, max_seq_len, *_ = obs.size()
 
         obs = obs.reshape(-1, *self.obs_shape)
@@ -163,20 +118,6 @@ class Network(nn.Module):
         return q_value
 
     def calculate_q(self, obs, last_action, last_reward, hidden_state, burn_in_steps, learning_steps):
-        """
-        Batch forward pass for Q-value computation (without forward steps)
-
-        Args:
-            obs: Batched observations (batch_size, seq_len, C, H, W)
-            last_action: Batched one-hot actions (batch_size, seq_len, action_dim)
-            last_reward: Batched rewards (batch_size, seq_len, 1)
-            hidden_state: Initial LSTM hidden state
-            burn_in_steps: Steps for LSTM warm-up per sequence
-            learning_steps: Steps used for gradient computation per sequence
-
-        Returns:
-            q_value: Q-values for learning steps (sum(learning_steps), action_dim)
-        """
         batch_size, max_seq_len, *_ = obs.size()
 
         obs = obs.reshape(-1, *self.obs_shape)

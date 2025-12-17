@@ -1,4 +1,4 @@
-# Smoke test for agent_ppo.py: bandit preference
+"""Smoke tests for `algorithms/ppo/agent_ppo.py`."""
 import time
 
 import numpy as np
@@ -12,16 +12,16 @@ def _make_agent(overrides=None):
     """Create a PPO agent with small buffers for quick smoke testing."""
     params = dict(
         data_dir="/tmp",
-        n_steps=16,  # buffer size (number of stacks in buffer)
-        n_stack=1,  # number of frames to stack
-        batch_size=2,  # size of the batch
-        n_epochs=4,  # number of times you train/sample from each training batch
-        frame_skip=1,  # act every frame
+        n_steps=16,
+        n_stack=1,
+        batch_size=2,
+        n_epochs=4,
+        frame_skip=1,
         num_actions=4,
         seed=0,
         learning_rate=1e-2,
-        gamma=0.0,  # bandit-style for this synthetic test
-        total_frames=1000,  # this is a no-op <- doesn't affect anything
+        gamma=0.0,
+        total_frames=1000,
         ent_coef=0.0,
         use_wandb=False,
     )
@@ -38,7 +38,7 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
     agent = _make_agent(overrides=None)
     action_counts = np.zeros(4, dtype=int)
     target_action = 0
-    prev_action = None  # action from previous step for reward calculation
+    prev_action = None
 
     for t in range(steps):
         reward = 0
@@ -116,7 +116,7 @@ def test_bandit_reward_flip_adapts_policy():
     action_counts = np.zeros(4, dtype=int)
     prev_action = None
 
-    pre_flip_probs = None  # Will store tensor probabilities
+    pre_flip_probs = None
 
     for t in range(steps):
         current_target = 0 if t < flip_at else 1
@@ -135,7 +135,6 @@ def test_bandit_reward_flip_adapts_policy():
             agent.training_thread.join()
             agent.training_thread = None
 
-        # Snapshot the policy after flip to check adaptation while running
         if t == flip_at:
             stacked_frames = np.zeros((1, 128, 128))
             obs_tensor = torch.as_tensor(stacked_frames).unsqueeze(0).to(agent.actor_model.device)
@@ -147,7 +146,6 @@ def test_bandit_reward_flip_adapts_policy():
     if agent.training_thread is not None:
         agent.training_thread.join(timeout=10)
 
-    # Evaluate policy probabilities at end
     stacked_frames = np.zeros((1, 128, 128))
     obs_tensor = torch.as_tensor(stacked_frames).unsqueeze(0).to(agent.actor_model.device)
     probs = agent.actor_model.policy.get_distribution(obs_tensor).distribution.probs[0].detach().cpu().numpy()

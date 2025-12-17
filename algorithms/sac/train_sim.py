@@ -15,7 +15,6 @@ Flow (sim_lat mode):
 
 import argparse
 import os
-import sys
 import time
 from collections import deque
 from datetime import datetime
@@ -35,8 +34,7 @@ import wandb
 
 from utils.latency_wrap.wrapper_v0_2 import LatencyModel
 
-sys.path.append(os.path.dirname(__file__))
-from sac import ReplayBuffer, SACAgent
+from algorithms.sac.sac import ReplayBuffer, SACAgent
 
 gym.register_envs(ale_py)
 

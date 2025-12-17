@@ -1,5 +1,3 @@
-"""Learner for R2D2: performs gradient updates using prioritized replay"""
-
 import glob
 import os
 import threading
@@ -19,12 +17,6 @@ from .model import Network
 
 
 class Learner:
-    """
-    Learner process: samples from replay buffer and trains the network
-
-    Uses Double DQN with value rescaling and recurrent network
-    """
-
     def __init__(
         self,
         batch_queue,
@@ -73,20 +65,9 @@ class Learner:
         self.action_dim = model.action_dim
 
     def store_weights(self):
-        """Store current weights to shared model for actors"""
         self.shared_model.load_state_dict(self.online_net.state_dict())
 
     def record_video_episode(self, video_folder: str, name_prefix: str = "eval"):
-        """
-        Record one evaluation episode with epsilon=0 (greedy policy)
-
-        Args:
-            video_folder: Directory to save video
-            name_prefix: Prefix for video filename
-
-        Returns:
-            episode_reward: Total reward for the episode
-        """
         if not self.env_name or not self.video_dir:
             return None
 
@@ -96,23 +77,20 @@ class Learner:
             from gymnasium.wrappers import RecordVideo
             from model import AgentState
 
-            # Create environment with render_mode for video recording
             env = create_env(env_name=self.env_name, noop_start=False, render_mode="rgb_array")
             env = RecordVideo(
                 env,
                 video_folder=video_folder,
                 name_prefix=name_prefix,
-                episode_trigger=lambda x: True,  # Record this episode
+                episode_trigger=lambda x: True,
             )
 
-            # Reset environment
             reset_result = env.reset()
             if isinstance(reset_result, tuple):
                 obs, _ = reset_result
             else:
                 obs = reset_result
 
-            # Create agent state
             agent_state = AgentState(torch.from_numpy(obs).unsqueeze(0), self.action_dim)
 
             done = False
@@ -120,10 +98,8 @@ class Learner:
             steps = 0
             max_steps = config.max_episode_steps
 
-            # Run episode with greedy policy (epsilon=0)
             while not done and steps < max_steps:
                 with torch.no_grad():
-                    # Move agent_state to device
                     agent_state.obs = agent_state.obs.to(self.device)
                     agent_state.last_action = agent_state.last_action.to(self.device)
                     agent_state.last_reward = agent_state.last_reward.to(self.device)
@@ -133,13 +109,9 @@ class Learner:
                             agent_state.hidden_state[1].to(self.device),
                         )
 
-                    # Get Q-values
                     q_values, hidden = self.online_net(agent_state)
-
-                    # Greedy action selection (q_values shape: [1, action_dim])
                     action = q_values.squeeze(0).argmax().item()
 
-                # Take action
                 step_result = env.step(action)
                 if len(step_result) == 5:
                     next_obs, reward, terminated, truncated, _ = step_result
@@ -147,7 +119,6 @@ class Learner:
                 else:
                     next_obs, reward, done, _ = step_result
 
-                # Update state
                 agent_state.update(next_obs, action, reward, hidden)
 
                 episode_reward += float(reward)
@@ -161,7 +132,6 @@ class Learner:
             return None
 
     def prepare_data(self):
-        """Background thread to prepare batched data"""
         while True:
             if not self.batch_queue.empty() and len(self.batched_data) < 4:
                 data = self.batch_queue.get_nowait()
@@ -170,7 +140,6 @@ class Learner:
                 time.sleep(0.1)
 
     def run(self):
-        """Main learner loop: train network on sampled batches"""
         background_thread = threading.Thread(target=self.prepare_data, daemon=True)
         background_thread.start()
         time.sleep(2)
@@ -218,7 +187,6 @@ class Learner:
 
             batch_obs = batch_obs / 255
 
-            # Double Q-learning: use online net to select actions, target net to evaluate
             with torch.no_grad():
                 batch_action_ = (
                     self.online_net.calculate_q_(
@@ -248,7 +216,6 @@ class Learner:
                     .squeeze(1)
                 )
 
-            # Value rescaling for stability
             target_q = self.value_rescale(
                 batch_n_step_reward + batch_n_step_gamma * self.inverse_value_rescale(batch_q_)
             )
@@ -267,11 +234,9 @@ class Learner:
 
             priorities = calculate_mixed_td_errors(td_errors, learning_steps.numpy())
 
-            # Gradient step
             self.optimizer.zero_grad()
             loss.backward()
 
-            # Compute grad norm before clipping for logging
             total_norm = 0.0
             for p in self.online_net.parameters():
                 if p.grad is not None:
@@ -284,10 +249,8 @@ class Learner:
 
             self.num_updates += 1
 
-            # print(f"[DEBUG learner] Putting loss {loss.item()} into priority_queue")
             self.priority_queue.put((idxes, priorities, old_ptr, loss.item()))
 
-            # Collect metrics for wandb logging
             if self.use_wandb:
                 metrics = {
                     'train/loss': loss.item(),
@@ -301,7 +264,6 @@ class Learner:
                     'train/learning_rate': self.optimizer.param_groups[0]['lr'],
                 }
 
-                # Read stats from replay buffer (non-blocking)
                 while not self.stats_queue.empty():
                     try:
                         buffer_stats = self.stats_queue.get_nowait()
@@ -311,15 +273,12 @@ class Learner:
 
                 wandb.log(metrics, step=self.num_updates)
 
-            # Store new weights in shared memory
             if self.num_updates % 4 == 0:
                 self.store_weights()
 
-            # Update target network
             if self.num_updates % self.target_net_update_interval == 0:
                 self.target_net.load_state_dict(self.online_net.state_dict())
 
-            # Save model and record video
             if self.num_updates % self.save_interval == 0:
                 save_path = os.path.join(self.models_dir, f'{self.num_updates}.pth')
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -334,7 +293,6 @@ class Learner:
                 torch.save(checkpoint, save_path)
                 print(f"Model saved to {save_path}")
 
-                # Record evaluation video
                 if self.video_dir:
                     print(f"Recording evaluation video (step {self.num_updates})...")
                     os.makedirs(self.video_dir, exist_ok=True)
@@ -348,7 +306,6 @@ class Learner:
 
                         if self.use_wandb:
                             try:
-                                # Find the recorded video file with the specific prefix
                                 prefix = f"eval_step_{self.num_updates}"
                                 video_files = glob.glob(os.path.join(self.video_dir, f"{prefix}*.mp4"))
                                 if video_files:
@@ -366,11 +323,9 @@ class Learner:
 
     @staticmethod
     def value_rescale(value, eps=1e-3):
-        """Value rescaling transformation for stability"""
         return value.sign() * ((value.abs() + 1).sqrt() - 1) + eps * value
 
     @staticmethod
     def inverse_value_rescale(value, eps=1e-3):
-        """Inverse value rescaling transformation"""
         temp = ((1 + 4 * eps * (value.abs() + 1 + eps)).sqrt() - 1) / (2 * eps)
         return value.sign() * (temp.square() - 1)
