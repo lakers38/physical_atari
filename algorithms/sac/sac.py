@@ -10,13 +10,13 @@ Implements the entropy-regularized RL algorithm with:
 Reference: Soft Actor-Critic for Discrete Action Settings (Christodoulou, 2019)
 """
 
+import os
+from typing import Optional, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from typing import Tuple, Optional
-import os
 
 
 class CNNFeatureExtractor(nn.Module):

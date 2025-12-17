@@ -4,17 +4,17 @@
 # Wraps algorithms/sac/agent_actor_critic.py to work with harness_physical.py
 
 import os
+import time
+from collections import deque
+from typing import Optional
+
 import cv2
 import numpy as np
 import torch
-from collections import deque
-from typing import Optional
-import time
 
 import wandb
-
+from algorithms.sac.sac import ReplayBuffer, SACAgent
 from framework.Logger import logger
-from algorithms.sac.sac import SACAgent, ReplayBuffer
 
 EXPECTED_OBS_DIMS = (210, 160, 3)
 
@@ -23,7 +23,7 @@ class Agent:
     """SAC agent wrapper for physical Atari harness"""
 
     def __init__(self, data_dir, seed, num_actions, total_frames, **kwargs):
-        logger.info(f"{'-'*8} INITIALIZING NEW SAC AGENT {'-'*8}")
+        logger.info(f"{'-' * 8} INITIALIZING NEW SAC AGENT {'-' * 8}")
 
         # Configuration
         self.num_actions = num_actions
@@ -72,7 +72,7 @@ class Agent:
                 logger.warning("agent_sac: Wandb requested but no run initialized. Please initialize in harness.")
                 self.use_wandb = False
 
-        logger.info(f"agent_sac: Configuration:")
+        logger.info("agent_sac: Configuration:")
         logger.info(f"  learning_rate={self.learning_rate}")
         logger.info(f"  gamma={self.gamma}")
         logger.info(f"  frame_skip={self.frame_skip}")
@@ -114,7 +114,7 @@ class Agent:
         if self.eval_mode:
             self.sac_agent.cnn.eval()
             self.sac_agent.actor.eval()
-            logger.info(f"agent_sac: Running in EVALUATION MODE (training disabled)")
+            logger.info("agent_sac: Running in EVALUATION MODE (training disabled)")
         else:
             self.sac_agent.cnn.train()
             self.sac_agent.actor.train()
@@ -145,7 +145,7 @@ class Agent:
         self.episode_reward = 0
         self.episode_length = 0
 
-        logger.info(f"agent_sac: Initialized successfully")
+        logger.info("agent_sac: Initialized successfully")
         logger.info(f"agent_sac: Observation shape = ({self.n_stack}, {self.obs_height}, {self.obs_width})")
         logger.info(f"agent_sac: Policy num actions = {self.num_actions}")
 

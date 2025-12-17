@@ -1,10 +1,12 @@
 """Neural network model for R2D2"""
 
 from dataclasses import dataclass, field
-from typing import Tuple, Optional
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+
 from . import config
 
 

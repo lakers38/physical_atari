@@ -1,13 +1,15 @@
 """Actor for R2D2: collects experience by interacting with environment"""
 
-import random
 import math
-from typing import Any, Tuple, Optional
+import random
+from typing import Any, Optional, Tuple
+
 import numpy as np
 import torch
-from .model import Network, AgentState
-from .replay_buffer import Block
+
 from . import config
+from .model import AgentState, Network
+from .replay_buffer import Block
 
 
 def calculate_mixed_td_errors(td_error, learning_steps):

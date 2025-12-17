@@ -26,9 +26,9 @@ import gymnasium as gym
 import numpy as np
 from coolname import generate_slug
 from gymnasium import spaces
-from gymnasium.wrappers import RecordVideo, RecordEpisodeStatistics
+from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 from scipy.ndimage import zoom
-from stable_baselines3.common.atari_wrappers import NoopResetEnv, MaxAndSkipEnv
+from stable_baselines3.common.atari_wrappers import MaxAndSkipEnv, NoopResetEnv
 from torch.utils.tensorboard import SummaryWriter
 
 import wandb
@@ -37,7 +37,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'latency_wra
 from wrapper_v0_2 import LatencyModel
 
 sys.path.append(os.path.dirname(__file__))
-from sac import SACAgent, ReplayBuffer
+from sac import ReplayBuffer, SACAgent
 
 # Register ALE environments
 gym.register_envs(ale_py)
@@ -692,7 +692,7 @@ def train_agent(
     # Finish WandB run
     if use_wandb and wandb_run is not None:
         wandb_run.finish()
-        print(f"[WandB] Run finished and uploaded")
+        print("[WandB] Run finished and uploaded")
 
     return agent, final_path
 
@@ -781,13 +781,13 @@ def main():
     config_path = os.path.join(experiment_dir, "config.txt")
     with open(config_path, "w") as f:
         f.write(f"Run name: {run_name}\n")
-        f.write(f"Algorithm: SoftActorCritic\n")
+        f.write("Algorithm: SoftActorCritic\n")
         f.write(f"Training mode: {args.mode}\n")
         f.write(f"Environment: {args.env}\n")
         f.write(f"Total timesteps: {args.timesteps}\n")
         f.write(f"Latency simulation: {args.mode == 'sim_lat'}\n")
         f.write(f"Reduce action set: {args.reduce_action_set}\n")
-        f.write(f"\n# Training Hyperparameters\n")
+        f.write("\n# Training Hyperparameters\n")
         f.write(f"Device: {args.device}\n")
         f.write(f"Learning rate: {args.learning_rate}\n")
         f.write(f"Entropy coef: {args.entropy_coef}\n")
@@ -800,12 +800,12 @@ def main():
         f.write(f"N stack: {args.n_stack}\n")
         f.write(f"Input size: {args.input_size}\n")
         f.write(f"Seed: {args.seed}\n")
-        f.write(f"\n# Video Recording\n")
+        f.write("\n# Video Recording\n")
         f.write(f"Record videos: {not args.no_videos}\n")
         if not args.no_videos:
             f.write(f"Video frequency: {args.video_freq} episodes\n")
         if args.load_model:
-            f.write(f"\n# Model Loading\n")
+            f.write("\n# Model Loading\n")
             f.write(f"Loaded from: {args.load_model}\n")
 
     # Train agent
@@ -839,11 +839,11 @@ def main():
     )
 
     print(f"\n{'=' * 60}")
-    print(f"Training completed successfully!")
+    print("Training completed successfully!")
     print(f"{'=' * 60}")
     print(f"Model saved at: {model_path}")
     print(f"Experiment directory: {experiment_dir}")
-    print(f"View training progress:")
+    print("View training progress:")
     print(f"  tensorboard --logdir {os.path.join(experiment_dir, 'logs', 'tensorboard')}")
     print(f"{'=' * 60}\n")
 

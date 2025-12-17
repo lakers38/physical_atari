@@ -182,7 +182,7 @@ class PriorityTree:
             print(f"Level {level}: {level_str}")
 
         print("=" * 80)
-        print(f"Leaf nodes are marked with [data_index] prefix\n")
+        print("Leaf nodes are marked with [data_index] prefix\n")
 
     def display_compact(self, precision=2):
         """

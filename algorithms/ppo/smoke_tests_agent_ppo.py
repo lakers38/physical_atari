@@ -1,8 +1,9 @@
 # Smoke test for agent_ppo.py: bandit preference
+import time
+
 import numpy as np
 import pytest
 import torch
-import time
 
 from .agent_ppo import Agent
 

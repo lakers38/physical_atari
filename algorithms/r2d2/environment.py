@@ -3,11 +3,13 @@ Updated for Gymnasium 1.1.1 API (5-value step, 2-value reset)"""
 
 import os
 import sys
-import gymnasium as gym
-import ale_py
-import numpy as np
-import cv2
 from collections import deque
+
+import ale_py
+import cv2
+import gymnasium as gym
+import numpy as np
+
 from . import config
 
 # Import latency model for hardware latency simulation

@@ -4,10 +4,11 @@ Smoke tests for the soft actor-critic style agent.
 Tests basic learning capabilities on simple bandit-style problems.
 """
 
+import os
+import sys
+
 import numpy as np
 import torch
-import sys
-import os
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(__file__))

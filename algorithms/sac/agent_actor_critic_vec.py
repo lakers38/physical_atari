@@ -4,12 +4,13 @@ heads for both policy and value prediction. Critic trains with TD targets and
 both heads are optimized via backprop.
 """
 
+import os
+from typing import List, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, List
-import os
 
 
 class CNNFeatureExtractor(nn.Module):

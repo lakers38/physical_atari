@@ -1,19 +1,19 @@
 import os
 import threading
-from collections import deque
 import time
+from collections import deque
 
 import cv2
+import gymnasium as gym
 import numpy as np
 import torch
-import gymnasium as gym
 from gymnasium import spaces
 from stable_baselines3 import PPO
+from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.buffers import RolloutBuffer
-import wandb
 
+import wandb
 from framework.Logger import logger
 
 EXPECTED_OBS_DIMS = (210, 160, 3)
@@ -80,7 +80,7 @@ class Agent:
     """PPO agent for physical Atari using Stable Baselines3"""
 
     def __init__(self, data_dir, seed, num_actions, total_frames, **kwargs):
-        logger.info(f"{'-'*8} INITIALIZING NEW PPO AGENT {'-'*8}")
+        logger.info(f"{'-' * 8} INITIALIZING NEW PPO AGENT {'-' * 8}")
         self.num_actions = num_actions
         self.total_frames = total_frames
         self.frame_skip = 4
@@ -163,7 +163,7 @@ class Agent:
             self.learner_model = PPO.load(self.load_file, env=self.vec_env, device=device)
             self.actor_model = PPO.load(self.load_file, env=self.vec_env, device=device)
         else:
-            logger.info(f"agent_ppo: Creating new PPO model")
+            logger.info("agent_ppo: Creating new PPO model")
             self.learner_model = PPO(
                 "CnnPolicy",
                 self.vec_env,
@@ -203,7 +203,7 @@ class Agent:
 
         self.actor_model.policy.eval()
         self.learner_model.policy.train()
-        logger.info(f"agent_ppo: Dual model architecture initialized (actor + learner)")
+        logger.info("agent_ppo: Dual model architecture initialized (actor + learner)")
 
         # Keep reference to ppo_model for backward compatibility
         self.ppo_model = self.learner_model
@@ -235,9 +235,9 @@ class Agent:
         self.training_thread = None
         self.episode_start_idx = 0
 
-        logger.info(f"agent_ppo: Initialized successfully")
+        logger.info("agent_ppo: Initialized successfully")
         if self.eval_mode:
-            logger.info(f"agent_ppo: Running in EVALUATION MODE (training disabled)")
+            logger.info("agent_ppo: Running in EVALUATION MODE (training disabled)")
         logger.info(f"agent_ppo: Rollout buffer size = {self.n_steps}")
         logger.info(f"agent_ppo: Entropy coefficient schedule: {self.ent_coef_initial} -> {self.ent_coef_final}")
 

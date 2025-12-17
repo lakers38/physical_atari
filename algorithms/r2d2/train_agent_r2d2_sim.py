@@ -9,27 +9,25 @@ with multiple parallel actors for efficient data collection and training.
 import argparse
 import os
 import random
-import torch.multiprocessing as mp
+import sys
 from datetime import datetime
 
-import gymnasium as gym
 import ale_py
+import gymnasium as gym
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 from coolname import generate_slug
+
 import wandb
 
-
-import sys
-import os
-
 sys.path.insert(0, os.path.dirname(__file__))
-from model import Network
 import config as r2d2_config
 from actor import Actor
-from learner import Learner
-from replay_buffer import ReplayBuffer
 from environment import create_env
+from learner import Learner
+from model import Network
+from replay_buffer import ReplayBuffer
 
 # Register ALE environments
 gym.register_envs(ale_py)
@@ -58,7 +56,7 @@ def load_checkpoint(checkpoint_path, model, device='cpu'):
         # Old format: (state_dict, num_updates, env_steps, training_time)
         state_dict, num_updates, env_steps, training_time = checkpoint
         model.load_state_dict(state_dict)
-        print(f"✓ Loaded checkpoint (old format)")
+        print("✓ Loaded checkpoint (old format)")
         print(f"  - num_updates: {num_updates}")
         print(f"  - env_steps: {env_steps}")
         print(f"  - training_time: {training_time:.2f} minutes")
@@ -66,7 +64,7 @@ def load_checkpoint(checkpoint_path, model, device='cpu'):
     elif isinstance(checkpoint, dict):
         # New format: dictionary with keys
         model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"✓ Loaded checkpoint (new format)")
+        print("✓ Loaded checkpoint (new format)")
         print(f"  - num_updates: {checkpoint.get('num_updates', 0)}")
         print(f"  - env_steps: {checkpoint.get('env_steps', 0)}")
         if 'training_time_minutes' in checkpoint:
@@ -75,7 +73,7 @@ def load_checkpoint(checkpoint_path, model, device='cpu'):
     else:
         # Just a state dict
         model.load_state_dict(checkpoint)
-        print(f"✓ Loaded checkpoint (state dict only)")
+        print("✓ Loaded checkpoint (state dict only)")
         return {'num_updates': 0, 'env_steps': 0}
 
 
@@ -122,9 +120,9 @@ def train_agent_distributed(
     torch.set_num_threads(1)
 
     mode_name = "sim_lat (with LatencyModel)" if simulate_latency else "sim (no latency)"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Starting Distributed R2D2 Training: {mode_name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Environment: {env_name}")
     print(f"Total timesteps: {total_timesteps:,}")
     print(f"Number of actors: {num_actors}")
@@ -132,7 +130,7 @@ def train_agent_distributed(
     print(f"Latency simulation: {simulate_latency}")
     if load_model_path:
         print(f"Loading checkpoint: {load_model_path}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # Initialize wandb
     if use_wandb:
@@ -275,7 +273,7 @@ def train_agent_distributed(
         print(f"\nTraining complete! Model saved to: {model_save_path}")
     else:
         model_save_path = None
-        print(f"\nTraining complete!")
+        print("\nTraining complete!")
 
     # Cleanup wandb
     if use_wandb:
@@ -343,7 +341,7 @@ def main():
     config_path = os.path.join(experiment_dir, "config.txt")
     with open(config_path, "w") as f:
         f.write(f"Run name: {run_name}\n")
-        f.write(f"Algorithm: R2D2 (distributed multi-actor)\n")
+        f.write("Algorithm: R2D2 (distributed multi-actor)\n")
         f.write(f"Training mode: {args.mode}\n")
         f.write(f"Environment: {args.env}\n")
         f.write(f"Total timesteps: {args.timesteps}\n")
@@ -380,19 +378,19 @@ def main():
         load_model_path=args.load_model,
     )
 
-    print(f"\n{'='*60}")
-    print(f"Training completed successfully!")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("Training completed successfully!")
+    print(f"{'=' * 60}")
     if model_path:
         print(f"Model saved at: {model_path}")
     print(f"Experiment directory: {experiment_dir}")
-    print(f"\nNext step: Transfer to physical hardware")
-    print(f"  python harness_physical.py \\")
-    print(f"    --agent_type=agent_r2d2 \\")
+    print("\nNext step: Transfer to physical hardware")
+    print("  python harness_physical.py \\")
+    print("    --agent_type=agent_r2d2 \\")
     if model_path:
         print(f"    --load_model={model_path} \\")
-    print(f"    --total_frames=500000")
-    print(f"{'='*60}\n")
+    print("    --total_frames=500000")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":

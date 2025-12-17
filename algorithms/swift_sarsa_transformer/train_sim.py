@@ -8,37 +8,38 @@ of a swappable transformer encoder (default: RF-DETR Nano/Small/Medium/etc).
 
 import argparse
 import json
+import math
 import os
 import pickle
 import random
 import sys
-import math
 import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
-from scipy.ndimage import zoom
-
-import gymnasium as gym
-import numpy as np
-import torch
-import torch.nn.functional as F
-import torchvision.transforms.functional as TVF
-import torchvision.models as tv_models
-import wandb
-from gymnasium import spaces
-from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
-from stable_baselines3.common.atari_wrappers import MaxAndSkipEnv, NoopResetEnv
 
 import ale_py  # noqa: F401 - registers ALE envs
+import gymnasium as gym
+import numpy as np
 import swift_sarsa
+import torch
+import torch.nn.functional as F
+import torchvision.models as tv_models
+import torchvision.transforms.functional as TVF
+from gymnasium import spaces
+from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
+from scipy.ndimage import zoom
+from stable_baselines3.common.atari_wrappers import MaxAndSkipEnv, NoopResetEnv
+
+import wandb
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "latency_wrap"))
 
-from rfdetr import RFDETRNano, RFDETRSmall, RFDETRMedium, RFDETRLarge  # type: ignore
-from rfdetr.util.misc import nested_tensor_from_tensor_list  # type: ignore
 from datetime import datetime
+
 import torch.nn as nn
+from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall  # type: ignore
+from rfdetr.util.misc import nested_tensor_from_tensor_list  # type: ignore
 
 
 # -----------------------------
@@ -492,11 +493,11 @@ class PPOBackbone(FeatureBackbone):
                 self.feature_dim = flattened.size(1)
                 print(f"[PPOBackbone] Computed feature_dim={self.feature_dim} from dummy forward pass")
 
-            print(f"[PPOBackbone] Successfully loaded CNN weights from PPO checkpoint")
+            print("[PPOBackbone] Successfully loaded CNN weights from PPO checkpoint")
 
         except Exception as e:
             print(f"[PPOBackbone] Failed to load as SB3 model: {e}")
-            print(f"[PPOBackbone] Attempting to load as raw state_dict...")
+            print("[PPOBackbone] Attempting to load as raw state_dict...")
             raise (Exception("PPO FAILED TO LOAD"))
 
     def _prep_obs(self, obs: np.ndarray) -> torch.Tensor:
@@ -556,7 +557,7 @@ class RainbowBackbone(FeatureBackbone):
             checkpoint_in_channels = conv0_shape[1]
             fc_input_dim = state_dict['value_stream.0.weight_mu'].shape[1]
 
-            print(f"[RainbowBackbone] Detected architecture:")
+            print("[RainbowBackbone] Detected architecture:")
             print(f"  - Input channels: {checkpoint_in_channels}")
             print(f"  - FC input dim: {fc_input_dim}")
 
@@ -579,7 +580,7 @@ class RainbowBackbone(FeatureBackbone):
             # Load only conv weights from checkpoint
             conv_state_dict = {k.replace('conv.', ''): v for k, v in state_dict.items() if k.startswith('conv.')}
             self.encoder.load_state_dict(conv_state_dict)
-            print(f"[RainbowBackbone] Conv encoder weights loaded successfully")
+            print("[RainbowBackbone] Conv encoder weights loaded successfully")
 
             self.checkpoint_in_channels = checkpoint_in_channels
 
@@ -1088,7 +1089,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
             avg_reward_100 = float(np.mean(recent_rewards)) if recent_rewards else 0.0
             print(
                 f"[stats] step={global_step} "
-                f"avg_env_step_ms={avg_env*1000:.3f} "
+                f"avg_env_step_ms={avg_env * 1000:.3f} "
                 f"avg_reward_100ep={avg_reward_100:.2f} "
                 f"avg_len={episode_len:.2f} "
                 f"feature_norm={episode_feat_norms[-1] if episode_feat_norms else 0:.4f}"

@@ -1,18 +1,21 @@
 """Learner for R2D2: performs gradient updates using prioritized replay"""
 
-import os
-import time
-import threading
 import glob
+import os
+import threading
+import time
 from copy import deepcopy
 from typing import Optional
+
 import numpy as np
 import torch
 import torch.nn as nn
+
 import wandb
-from .model import Network
-from .actor import calculate_mixed_td_errors
+
 from . import config
+from .actor import calculate_mixed_td_errors
+from .model import Network
 
 
 class Learner:
@@ -88,10 +91,10 @@ class Learner:
             return None
 
         try:
-            from gymnasium.wrappers import RecordVideo
-            from environment import create_env
-            from model import AgentState
             import numpy as np
+            from environment import create_env
+            from gymnasium.wrappers import RecordVideo
+            from model import AgentState
 
             # Create environment with render_mode for video recording
             env = create_env(env_name=self.env_name, noop_start=False, render_mode="rgb_array")

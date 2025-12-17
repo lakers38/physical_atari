@@ -5,9 +5,10 @@ Uses the already-extracted policy.pth, policy.optimizer.pth files
 """
 
 import os
-import torch
-import gymnasium as gym
+
 import ale_py
+import gymnasium as gym
+import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack
@@ -30,7 +31,7 @@ def create_matching_env(env_name="ALE/MsPacman-v5"):
     )
     env = VecFrameStack(env, n_stack=16)  # 16 frames stacked (matching your training)
 
-    print(f"Environment created:")
+    print("Environment created:")
     print(f"  Observation shape: {env.observation_space.shape}")
     print(f"  Action space: {env.action_space.n} actions")
 

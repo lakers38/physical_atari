@@ -4,17 +4,18 @@ Comprehensive test script for R2D2 Actor components
 Tests each component in isolation before full integration
 """
 
-import sys
 import os
+import sys
+
 import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from r2d2.environment import create_env
-from r2d2.model import Network, AgentState
-from r2d2.actor import LocalBuffer, Actor
 from r2d2 import config
+from r2d2.actor import Actor, LocalBuffer
+from r2d2.environment import create_env
+from r2d2.model import AgentState, Network
 
 
 def test_environment():
@@ -24,20 +25,20 @@ def test_environment():
     print("=" * 60)
 
     env = create_env(env_name='ALE/MsPacman-v5', noop_start=True)
-    print(f"✓ Environment created")
+    print("✓ Environment created")
     print(f"  Observation space: {env.observation_space}")
     print(f"  Action space: {env.action_space}")
     print(f"  Action space size: {env.action_space.n}")
 
     obs, info = env.reset()
-    print(f"✓ Reset successful")
+    print("✓ Reset successful")
     print(f"  Observation shape: {obs.shape}")
-    print(f"  Expected: (1, 84, 84)")
+    print("  Expected: (1, 84, 84)")
     assert obs.shape == (1, 84, 84), f"Wrong obs shape: {obs.shape}"
 
     action = env.action_space.sample()
     obs, reward, terminated, truncated, info = env.step(action)
-    print(f"✓ Step successful")
+    print("✓ Step successful")
     print(f"  Observation shape: {obs.shape}")
     print(f"  Reward: {reward}")
 
@@ -62,7 +63,7 @@ def test_model(action_dim):
     # Create AgentState
     obs_tensor = torch.from_numpy(obs).unsqueeze(0).float()
     state = AgentState(obs_tensor, action_dim)
-    print(f"✓ AgentState created")
+    print("✓ AgentState created")
     print(f"  obs shape: {state.obs.shape}")
     print(f"  last_action shape: {state.last_action.shape}")
     print(f"  last_reward shape: {state.last_reward.shape}")
@@ -71,14 +72,14 @@ def test_model(action_dim):
     with torch.no_grad():
         q_value, hidden = model(state)
 
-    print(f"✓ Forward pass successful")
+    print("✓ Forward pass successful")
     print(f"  q_value shape: {q_value.shape}")
     print(f"  Expected: ({action_dim},)")
     assert q_value.shape == (action_dim,), f"Wrong q_value shape: {q_value.shape}"
 
     print(f"  hidden[0] shape: {hidden[0].shape}")
     print(f"  hidden[1] shape: {hidden[1].shape}")
-    print(f"  Expected: (1, 1, 512)")
+    print("  Expected: (1, 1, 512)")
 
     # Test action selection
     action = q_value.argmax().item()
@@ -87,9 +88,9 @@ def test_model(action_dim):
 
     # Test hidden state conversion for buffer
     hidden_np = torch.cat(hidden).squeeze(1).numpy()
-    print(f"✓ Hidden state conversion successful")
+    print("✓ Hidden state conversion successful")
     print(f"  hidden_np shape: {hidden_np.shape}")
-    print(f"  Expected: (2, 512)")
+    print("  Expected: (2, 512)")
     assert hidden_np.shape == (2, 512), f"Wrong hidden_np shape: {hidden_np.shape}"
 
     print()
@@ -103,14 +104,14 @@ def test_local_buffer(action_dim):
     print("=" * 60)
 
     buffer = LocalBuffer(action_dim)
-    print(f"✓ LocalBuffer created")
+    print("✓ LocalBuffer created")
     print(f"  block_length: {buffer.block_length}")
     print(f"  learning_steps: {buffer.learning_steps}")
 
     # Initialize buffer
     init_obs = np.random.randint(0, 255, (1, 84, 84), dtype=np.uint8)
     buffer.reset(init_obs)
-    print(f"✓ Buffer reset")
+    print("✓ Buffer reset")
     print(f"  obs_buffer length: {len(buffer.obs_buffer)}")
     print(f"  hidden_buffer length: {len(buffer.hidden_buffer)}")
     print(f"  hidden_buffer[0] shape: {buffer.hidden_buffer[0].shape}")
@@ -129,20 +130,20 @@ def test_local_buffer(action_dim):
         buffer.add(action, reward, next_obs, q_value, hidden)
 
         if (i + 1) % 20 == 0:
-            print(f"    {i+1} transitions added, buffer size: {buffer.size}")
+            print(f"    {i + 1} transitions added, buffer size: {buffer.size}")
 
-    print(f"✓ Transitions added successfully")
+    print("✓ Transitions added successfully")
     print(f"  Final buffer size: {buffer.size}")
     print(f"  obs_buffer length: {len(buffer.obs_buffer)}")
     print(f"  qval_buffer length: {len(buffer.qval_buffer)}")
 
     # Test finish (with bootstrap)
-    print(f"\n  Testing buffer.finish() with bootstrap Q-values...")
+    print("\n  Testing buffer.finish() with bootstrap Q-values...")
     last_qval = np.random.randn(action_dim).astype(np.float32)
 
     try:
         block, priorities, episode_reward = buffer.finish(last_qval)
-        print(f"✓ Buffer finish successful (with bootstrap)")
+        print("✓ Buffer finish successful (with bootstrap)")
         print(f"  block.obs shape: {block.obs.shape}")
         print(f"  block.actions shape: {block.action.shape}")
         print(f"  block.n_step_reward shape: {block.n_step_reward.shape}")
@@ -157,7 +158,7 @@ def test_local_buffer(action_dim):
         return None
 
     # Reset and test finish without bootstrap (episode done)
-    print(f"\n  Testing buffer.finish() without bootstrap (episode done)...")
+    print("\n  Testing buffer.finish() without bootstrap (episode done)...")
     buffer.reset(init_obs)
 
     for i in range(50):
@@ -170,7 +171,7 @@ def test_local_buffer(action_dim):
 
     try:
         block, priorities, episode_reward = buffer.finish(None)
-        print(f"✓ Buffer finish successful (episode done)")
+        print("✓ Buffer finish successful (episode done)")
         print(f"  episode_reward: {episode_reward}")
     except Exception as e:
         print(f"✗ Buffer finish FAILED: {type(e).__name__}: {e}")
@@ -194,7 +195,7 @@ def test_full_episode(action_dim):
     model.eval()
     buffer = LocalBuffer(action_dim)
 
-    print(f"✓ Environment, model, and buffer created")
+    print("✓ Environment, model, and buffer created")
 
     # Reset
     obs, info = env.reset()
@@ -203,7 +204,7 @@ def test_full_episode(action_dim):
     obs_tensor = torch.from_numpy(obs).unsqueeze(0).float()
     agent_state = AgentState(obs_tensor, action_dim)
 
-    print(f"✓ Episode reset")
+    print("✓ Episode reset")
 
     # Run episode for a few steps
     max_steps = 50
@@ -231,16 +232,16 @@ def test_full_episode(action_dim):
         agent_state.update(next_obs, action, reward, hidden)
 
         if (step + 1) % 10 == 0:
-            print(f"    Step {step+1}: reward={reward:.2f}, done={done}, buffer_size={buffer.size}")
+            print(f"    Step {step + 1}: reward={reward:.2f}, done={done}, buffer_size={buffer.size}")
 
         if done:
-            print(f"  Episode ended at step {step+1}")
+            print(f"  Episode ended at step {step + 1}")
             break
 
-    print(f"✓ Episode simulation successful")
+    print("✓ Episode simulation successful")
 
     # Test buffer finish
-    print(f"\n  Testing buffer finish...")
+    print("\n  Testing buffer finish...")
     try:
         if done:
             block, priorities, episode_reward = buffer.finish(None)
@@ -249,7 +250,7 @@ def test_full_episode(action_dim):
                 q_value, hidden = model(agent_state)
             block, priorities, episode_reward = buffer.finish(q_value.numpy())
 
-        print(f"✓ Buffer finish successful")
+        print("✓ Buffer finish successful")
         print(f"  Block created with {block.num_sequences} sequences")
     except Exception as e:
         print(f"✗ Buffer finish FAILED: {type(e).__name__}: {e}")

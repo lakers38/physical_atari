@@ -1,14 +1,16 @@
 """Replay buffer for R2D2 with prioritized experience replay"""
 
-import time
-import threading
 import math
+import threading
+import time
 from dataclasses import dataclass
+
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from .priority_tree import PriorityTree
+
 from . import config
+from .priority_tree import PriorityTree
 
 
 @dataclass
