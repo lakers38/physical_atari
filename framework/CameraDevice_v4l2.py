@@ -21,7 +21,6 @@ import os
 import queue
 import select
 import threading
-import time
 
 import numpy as np
 from numba import njit, prange

@@ -15,7 +15,6 @@
 import cv2
 import numpy as np
 
-from framework.Logger import logger
 
 
 class ScreenDetectorFixed:

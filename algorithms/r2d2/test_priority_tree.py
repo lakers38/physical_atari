@@ -3,7 +3,7 @@
 
 import numpy as np
 import pytest
-from priority_tree import PriorityTree
+from algorithms.r2d2.priority_tree import PriorityTree
 
 
 class TestPriorityTree:
@@ -159,9 +159,9 @@ def test_display_functions():
     tree.update(np.array([0, 1, 2, 3, 4]), np.array([10.0, 20.0, 30.0, 40.0, 5.0]))
     tree.size = 5
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("DISPLAY FUNCTION DEMO")
-    print("="*80)
+    print("=" * 80)
 
     # Show tree structure
     tree.display(precision=2)

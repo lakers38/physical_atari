@@ -4,7 +4,7 @@ import argparse
 import importlib
 import os
 import time
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Iterable
 
 import gymnasium as gym
 import numpy as np
@@ -12,13 +12,10 @@ from gymnasium.vector import SyncVectorEnv, VectorEnvWrapper
 from imageio import v2 as imageio
 from tqdm import tqdm
 
-from latency_wrap.wrapper_v0_2 import LatencyModel
+from utils.latency_wrap.wrapper_v0_2 import LatencyModel
 from vector_agents import VectorAgent
 
-try:
-    import wandb  # type: ignore
-except ImportError:  # pragma: no cover
-    wandb = None
+import wandb
 
 
 def _noop_vector() -> list[float]:
@@ -105,7 +102,7 @@ class VecLatencyWrapper(VectorEnvWrapper):
         return self.env.step(delayed)
 
 
-def parse_agent_spec(agent_spec: str) -> Tuple[str, str]:
+def parse_agent_spec(agent_spec: str) -> tuple[str, str]:
     if ":" not in agent_spec:
         raise ValueError("Agent spec must be 'module:ClassName'")
     module_name, class_name = agent_spec.split(":", 1)
@@ -122,8 +119,8 @@ def load_agent(agent_spec: str) -> type[VectorAgent]:
     return agent_cls
 
 
-def parse_agent_kwargs(raw_args: Iterable[str]) -> Dict[str, Any]:
-    parsed: Dict[str, Any] = {}
+def parse_agent_kwargs(raw_args: Iterable[str]) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
     for entry in raw_args:
         if "=" not in entry:
             raise ValueError(f"Invalid agent_arg '{entry}' (expected key = value).")
@@ -202,7 +199,7 @@ def main():
     run_cfg.pop("agent_arg", None)
 
     run = None
-    if args.wandb and wandb is not None:
+    if args.wandb:
         run = wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
@@ -261,7 +258,7 @@ def main():
                             f"{args.rom}_episode_{episode_counts[idx]:04d}.mp4",
                         )
                         imageio.mimsave(video_path, video_frames, fps=args.video_fps)
-                        if run is not None and wandb is not None:
+                        if run is not None:
                             run.log({"episode_video": wandb.Video(video_path, fps=args.video_fps)}, step=global_step)
                         next_record_episode += args.video_every
                     video_frames = []

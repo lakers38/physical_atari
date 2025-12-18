@@ -1,19 +1,19 @@
-"""Replay buffer for R2D2 with prioritized experience replay"""
-
-import time
-import threading
 import math
+import threading
+import time
 from dataclasses import dataclass
+
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from .priority_tree import PriorityTree
+
 from . import config
+from .priority_tree import PriorityTree
+from framework.Logger import logger
 
 
 @dataclass
 class Block:
-    """A block of sequential experiences stored in the replay buffer"""
     obs: np.array
     last_action: np.array
     last_reward: np.array
@@ -28,19 +28,18 @@ class Block:
 
 
 class ReplayBuffer:
-    """
-    Prioritized replay buffer for R2D2
-
-    Stores blocks of sequential experiences and samples batches with prioritization
-    """
-
-    def __init__(self, sample_queue_list, batch_queue, priority_queue, stats_queue,
-                 buffer_capacity=config.buffer_capacity,
-                 sequence_len=config.learning_steps,
-                 alpha=config.prio_exponent,
-                 beta=config.importance_sampling_exponent,
-                 batch_size=config.batch_size):
-
+    def __init__(
+        self,
+        sample_queue_list,
+        batch_queue,
+        priority_queue,
+        stats_queue,
+        buffer_capacity=config.buffer_capacity,
+        sequence_len=config.learning_steps,
+        alpha=config.prio_exponent,
+        beta=config.importance_sampling_exponent,
+        batch_size=config.batch_size,
+    ):
         self.buffer_capacity = buffer_capacity
         self.sequence_len = sequence_len
         self.block_len = config.block_length
@@ -74,13 +73,17 @@ class ReplayBuffer:
 
         self.buffer = [None] * self.num_blocks
 
-        self.sample_queue_list, self.batch_queue, self.priority_queue, self.stats_queue = sample_queue_list, batch_queue, priority_queue, stats_queue
+        self.sample_queue_list, self.batch_queue, self.priority_queue, self.stats_queue = (
+            sample_queue_list,
+            batch_queue,
+            priority_queue,
+            stats_queue,
+        )
 
     def __len__(self):
         return self.size
 
     def run(self):
-        """Main loop for replay buffer process"""
         background_thread = threading.Thread(target=self.add_data, daemon=True)
         background_thread.start()
 
@@ -93,11 +96,10 @@ class ReplayBuffer:
         log_interval = config.log_interval
 
         while True:
-            print(f'buffer size: {self.size}')
+            logger.info("r2d2: buffer size: %s", self.size)
             self.last_size = self.size
-            print(f'number of environment steps: {self.env_steps}')
+            logger.info("r2d2: number of environment steps: %s", self.env_steps)
 
-            # Prepare stats to send
             stats = {
                 'buffer/size': self.size,
                 'buffer/utilization': self.size / self.buffer_capacity,
@@ -106,29 +108,27 @@ class ReplayBuffer:
 
             if self.num_episodes != 0:
                 avg_episode_reward = self.episode_reward / self.num_episodes
-                print(f'average episode return: {avg_episode_reward:.4f}')
+                logger.info("r2d2: average episode return: %.4f", avg_episode_reward)
                 stats['env/episode_reward'] = avg_episode_reward
                 stats['env/num_episodes'] = self.num_episodes
                 self.episode_reward = 0
                 self.num_episodes = 0
 
-            print(f'number of training steps: {self.training_steps}')
+            logger.info("r2d2: number of training steps: %s", self.training_steps)
             training_speed = (self.training_steps - self.last_training_steps) / log_interval
-            print(f'training speed: {training_speed}/s')
+            logger.info("r2d2: training speed: %.3f/s", training_speed)
             stats['train/steps_per_second'] = training_speed
             env_steps_trained = self.sampled_env_steps - self.last_sampled_env_steps
-            print(f'env steps trained last period: {env_steps_trained}')
+            logger.info("r2d2: env steps trained last period: %s", env_steps_trained)
             stats['train/env_steps_used_last_period'] = env_steps_trained
             self.last_sampled_env_steps = self.sampled_env_steps
 
             if self.training_steps != self.last_training_steps:
                 avg_loss = self.sum_loss / (self.training_steps - self.last_training_steps)
-                print(f'loss: {avg_loss:.6f}')
+                logger.info("r2d2: loss: %.6f", avg_loss)
                 self.last_training_steps = self.training_steps
                 self.sum_loss = 0
-            print()
 
-            # Send stats to learner for wandb logging
             if not self.stats_queue.full():
                 self.stats_queue.put(stats)
 
@@ -138,7 +138,6 @@ class ReplayBuffer:
                 time.sleep(log_interval)
 
     def prepare_data(self):
-        """Prepare batches for training"""
         while self.size < config.learning_starts:
             time.sleep(1)
 
@@ -150,7 +149,6 @@ class ReplayBuffer:
                 time.sleep(0.1)
 
     def add_data(self):
-        """Add data from actor queues"""
         while True:
             for sample_queue in self.sample_queue_list:
                 if not sample_queue.empty():
@@ -158,7 +156,6 @@ class ReplayBuffer:
                     self.add(*data)
 
     def update_data(self):
-        """Update priorities from learner"""
         while True:
             if not self.priority_queue.empty():
                 data = self.priority_queue.get_nowait()
@@ -167,20 +164,11 @@ class ReplayBuffer:
                 time.sleep(0.1)
 
     def add(self, block: Block, priority: np.array, episode_reward: float):
-        """
-        Add a block to the replay buffer
-
-        Args:
-            block: Block of experiences
-            priority: Priority for each sequence in the block
-            episode_reward: Episode reward (if episode ended, else None)
-        """
         with self.lock:
-            # Update only the actual number of sequences in this block
             start_idx = self.block_ptr * self.seq_per_block
             idxes = np.arange(start_idx, start_idx + block.num_sequences, dtype=np.int64)
 
-            self.priority_tree.update(idxes, priority[:block.num_sequences])
+            self.priority_tree.update(idxes, priority[: block.num_sequences])
 
             if self.buffer[self.block_ptr] is not None:
                 self.size -= np.sum(self.buffer[self.block_ptr].learning_steps).item()
@@ -198,18 +186,11 @@ class ReplayBuffer:
                 self.num_episodes += 1
 
     def sample_batch(self):
-        """
-        Sample one batch of training data
-
-        Returns:
-            Tuple of batched tensors for training
-        """
         batch_obs, batch_last_action, batch_last_reward, batch_hidden = [], [], [], []
         batch_action, batch_reward, batch_gamma = [], [], []
         burn_in_steps, learning_steps, forward_steps = [], [], []
 
         with self.lock:
-            # Keep sampling until we have a full batch of valid sequences
             valid_idxes = []
             valid_is_weights = []
 
@@ -220,16 +201,14 @@ class ReplayBuffer:
                 block_idxes = idxes // self.seq_per_block
                 sequence_idxes = idxes % self.seq_per_block
 
-                # Filter out invalid samples (None blocks or out-of-range sequences)
                 for i, (block_idx, sequence_idx) in enumerate(zip(block_idxes, sequence_idxes)):
                     block = self.buffer[block_idx]
                     if block is not None and sequence_idx < block.num_sequences:
                         valid_idxes.append(idxes[i])
                         valid_is_weights.append(is_weights[i])
 
-            # Use only the valid samples
-            idxes = np.array(valid_idxes[:self.batch_size])
-            is_weights = np.array(valid_is_weights[:self.batch_size])
+            idxes = np.array(valid_idxes[: self.batch_size])
+            is_weights = np.array(valid_is_weights[: self.batch_size])
 
             block_idxes = idxes // self.seq_per_block
             sequence_idxes = idxes % self.seq_per_block
@@ -243,10 +222,14 @@ class ReplayBuffer:
 
                 start_idx = block.burn_in_steps[0] + np.sum(block.learning_steps[:sequence_idx])
 
-                obs = block.obs[start_idx - burn_in_step:start_idx + learning_step + forward_step]
-                last_action = block.last_action[start_idx - burn_in_step:start_idx + learning_step + forward_step]
-                last_reward = block.last_reward[start_idx - burn_in_step:start_idx + learning_step + forward_step]
-                obs, last_action, last_reward = torch.from_numpy(obs), torch.from_numpy(last_action), torch.from_numpy(last_reward)
+                obs = block.obs[start_idx - burn_in_step : start_idx + learning_step + forward_step]
+                last_action = block.last_action[start_idx - burn_in_step : start_idx + learning_step + forward_step]
+                last_reward = block.last_reward[start_idx - burn_in_step : start_idx + learning_step + forward_step]
+                obs, last_action, last_reward = (
+                    torch.from_numpy(obs),
+                    torch.from_numpy(last_action),
+                    torch.from_numpy(last_reward),
+                )
 
                 start_idx = np.sum(block.learning_steps[:sequence_idx])
                 end_idx = start_idx + block.learning_steps[sequence_idx]
@@ -281,43 +264,27 @@ class ReplayBuffer:
                 batch_last_action,
                 batch_last_reward,
                 torch.from_numpy(np.stack(batch_hidden)).transpose(0, 1),
-
                 torch.from_numpy(np.concatenate(batch_action)).unsqueeze(1),
                 torch.from_numpy(np.concatenate(batch_reward)),
                 torch.from_numpy(np.concatenate(batch_gamma)),
-
                 torch.ByteTensor(burn_in_steps),
                 torch.ByteTensor(learning_steps),
                 torch.ByteTensor(forward_steps),
-
                 idxes,
                 torch.from_numpy(is_weights.astype(np.float32)),
                 self.block_ptr,
-
-                self.env_steps
+                self.env_steps,
             )
 
         return data
 
     def update_priorities(self, idxes: np.ndarray, td_errors: np.ndarray, old_ptr: int, loss: float):
-        """
-        Update priorities of sampled transitions
-
-        Args:
-            idxes: Indices to update
-            td_errors: TD errors for priority calculation
-            old_ptr: Old buffer pointer (to detect stale data)
-            loss: Training loss for logging
-        """
         with self.lock:
-            # Discard idxes that have been replaced by new data
             if self.block_ptr > old_ptr:
-                # Range from [old_ptr, self.block_ptr)
                 mask = (idxes < old_ptr * self.seq_per_block) | (idxes >= self.block_ptr * self.seq_per_block)
                 idxes = idxes[mask]
                 td_errors = td_errors[mask]
             elif self.block_ptr < old_ptr:
-                # Range from [0, self.block_ptr) & [old_ptr, capacity)
                 mask = (idxes < old_ptr * self.seq_per_block) & (idxes >= self.block_ptr * self.seq_per_block)
                 idxes = idxes[mask]
                 td_errors = td_errors[mask]
@@ -326,4 +293,3 @@ class ReplayBuffer:
 
         self.training_steps += 1
         self.sum_loss += loss
-        # print(f"[DEBUG update_priorities] loss received: {loss}, sum_loss now: {self.sum_loss}, training_steps: {self.training_steps}")

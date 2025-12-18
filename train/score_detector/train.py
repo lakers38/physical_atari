@@ -19,9 +19,7 @@ import math
 import os
 import random
 import shutil
-import sys
 import time
-from collections import Counter
 from typing import Union
 
 import editdistance
@@ -29,14 +27,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from augmentations import AugmentationAnalyzer, AugmentationBuilder, save_augmented_batch
-from dataset import MultiDigitDataset, get_class_weights
-from generate_dataset import generate_data
-from preprocess_dataset import compute_train_split_stats, preprocess_data
+from .augmentations import AugmentationAnalyzer, AugmentationBuilder, save_augmented_batch
+from .dataset import MultiDigitDataset, get_class_weights
+from .generate_dataset import generate_data
+from .preprocess_dataset import compute_train_split_stats, preprocess_data
 from torch.utils.data import WeightedRandomSampler
 from torchvision import transforms
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from framework.models.score_detector.crnn_ctc import CRNN, greedy_decode_ctc
 
 IMAGE_SIZE = 32

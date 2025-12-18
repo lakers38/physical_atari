@@ -15,7 +15,6 @@
 # agent_random.py
 #
 # Use the last evaluations for target calculation instead of a target model evaluation
-import time
 
 import numpy as np
 

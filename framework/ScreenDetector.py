@@ -14,7 +14,6 @@
 
 import queue
 import threading
-import time
 from enum import Enum
 
 import dt_apriltags

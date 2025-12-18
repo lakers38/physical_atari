@@ -13,15 +13,11 @@
 # limitations under the License.
 
 import contextlib
-import math
 import os
 import time
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.cuda.amp import autocast
 from typing import Optional
 
 from framework.Logger import logger

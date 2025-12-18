@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Protocol, Iterable, Dict
+from typing import Protocol, Iterable
 import numpy as np
 
 
@@ -14,7 +14,7 @@ class VectorAgent(Protocol):
         rewards: np.ndarray,
         terminations: np.ndarray,
         truncations: np.ndarray,
-        infos: Iterable[Dict],
+        infos: Iterable[dict],
     ) -> None: ...
 
     def train_step(self) -> None: ...

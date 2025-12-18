@@ -1,7 +1,8 @@
-
 """Priority tree (sum tree) for prioritized experience replay"""
 
 import numpy as np
+
+from framework.Logger import logger
 
 
 class PriorityTree:
@@ -71,6 +72,7 @@ class PriorityTree:
 
         # Vectorized tree traversal
         import math
+
         num_layers = int(math.log2(self.capacity)) + 1
         idxes = np.zeros(batch_size, dtype=np.int64)
 
@@ -89,7 +91,7 @@ class PriorityTree:
         idxes = idxes - (self.capacity - 1)
 
         # Calculate importance sampling weights
-        min_priority = np.min(self.tree[self.capacity-1:self.capacity-1+self.size])
+        min_priority = np.min(self.tree[self.capacity - 1 : self.capacity - 1 + self.size])
 
         # Simplified IS weight formula: (p_i / min_p)^(-beta)
         # Add epsilon to prevent division by zero
@@ -147,17 +149,16 @@ class PriorityTree:
         if max_depth is not None:
             depth = min(depth, max_depth)
 
-        print(f"\nPriorityTree Display (capacity={self.capacity}, size={self.size})")
-        print(f"Total Priority: {self.total_priority():.{precision}f}")
-        print(f"Alpha: {self.alpha}, Beta: {self.beta}")
-        print("=" * 80)
+        logger.info("r2d2: PriorityTree Display capacity=%s size=%s", self.capacity, self.size)
+        logger.info("r2d2: Total Priority: %s", f"{self.total_priority():.{precision}f}")
+        logger.info("r2d2: Alpha: %s, Beta: %s", self.alpha, self.beta)
+        logger.info("r2d2: %s", "=" * 80)
 
         # Display level by level
         for level in range(depth):
             # Calculate nodes at this level
             level_start = 2**level - 1
-            level_end = min(2**(level+1) - 1, len(self.tree))
-            num_nodes = level_end - level_start
+            level_end = min(2 ** (level + 1) - 1, len(self.tree))
 
             # Calculate spacing
             max_width = 80
@@ -179,10 +180,10 @@ class PriorityTree:
                 padding = (node_width - len(node_str)) // 2
                 level_str += " " * padding + node_str + " " * (node_width - padding - len(node_str))
 
-            print(f"Level {level}: {level_str}")
+            logger.info("r2d2: Level %s: %s", level, level_str)
 
-        print("=" * 80)
-        print(f"Leaf nodes are marked with [data_index] prefix\n")
+        logger.info("r2d2: %s", "=" * 80)
+        logger.info("r2d2: Leaf nodes are marked with [data_index] prefix")
 
     def display_compact(self, precision=2):
         """
@@ -191,25 +192,25 @@ class PriorityTree:
         Args:
             precision: Number of decimal places for values
         """
-        print(f"\nPriorityTree Compact View (capacity={self.capacity}, size={self.size})")
-        print(f"Total Priority: {self.total_priority():.{precision}f}")
-        print("=" * 80)
+        logger.info("r2d2: PriorityTree Compact View capacity=%s size=%s", self.capacity, self.size)
+        logger.info("r2d2: Total Priority: %s", f"{self.total_priority():.{precision}f}")
+        logger.info("r2d2: %s", "=" * 80)
 
         # Internal nodes (non-leaves)
-        print("Internal Nodes (cumulative sums):")
+        logger.info("r2d2: Internal Nodes (cumulative sums):")
         internal_nodes = []
         for i in range(self.capacity - 1):
             internal_nodes.append(f"[{i}]:{self.tree[i]:.{precision}f}")
-        print("  " + ", ".join(internal_nodes))
+        logger.info("r2d2: %s", "  " + ", ".join(internal_nodes))
 
         # Leaf nodes (actual data priorities)
-        print("\nLeaf Nodes (data priorities):")
+        logger.info("r2d2: Leaf Nodes (data priorities):")
         leaf_nodes = []
         for i in range(self.capacity):
             tree_idx = i + self.capacity - 1
             value = self.tree[tree_idx]
             if value > 0 or i < self.size:  # Only show non-zero or within size
                 leaf_nodes.append(f"data[{i}]:{value:.{precision}f}")
-        print("  " + ", ".join(leaf_nodes if leaf_nodes else ["(empty)"]))
+        logger.info("r2d2: %s", "  " + ", ".join(leaf_nodes if leaf_nodes else ["(empty)"]))
 
-        print("=" * 80 + "\n")
+        logger.info("r2d2: %s", "=" * 80)

@@ -18,7 +18,6 @@ import time
 
 from framework.Actions import Action
 from framework.ControlDevice import ControlDevice
-from framework.Logger import logger
 
 
 class Joystick:

@@ -13,11 +13,8 @@
 # limitations under the License.
 
 import json
-import os
-import sys
 import time
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 from framework.ControlDeviceCfg import create_control_device_from_cfg
 from framework.Keyboard import Keyboard
 

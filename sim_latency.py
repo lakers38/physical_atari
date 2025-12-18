@@ -5,8 +5,9 @@ import time
 from importlib import import_module
 
 from ale_py import Action, ALEInterface, LoggerMode, roms
+import wandb
 
-from latency_wrap.wrapper_v0_2 import LatencyModel
+from utils.latency_wrap.wrapper_v0_2 import LatencyModel
 
 
 SUPPORTED_AGENTS = {
@@ -60,11 +61,6 @@ def build_argument_parser():
 
 def maybe_init_wandb(args, config):
     if args.no_wandb:
-        return None
-    try:
-        import wandb  # type: ignore
-    except ImportError:
-        print("wandb not installed; skipping logging. Install wandb or pass --no_wandb.")
         return None
 
     run = wandb.init(
