@@ -1,3 +1,29 @@
+# Robo Atari
+
+Robo Atari is a fork of [physical_atari](https://github.com/Keen-Technologies/physical_atari/). 
+
+Most of our proposed modifications are in `algorithms/`. We have made some small modifications to the physical harness code to ensure compatibility with our agents.
+
+```
+algorithms/                          # RL agents + sim training scripts
+├── dqn/                             # DQN agent (sim only)
+├── rainbow_dqn/                     # Rainbow DQN agent (physical + sim)
+├── r2d2/                            # R2D2 agent (sim only)
+├── ppo/                             # PPO agent + (physical + sim)
+├── sac/                             # SAC agent (physical + sim)
+├── delay_target/                    # Delay-target agent (physical + sim)
+└── swift_sarsa/                     # Swift SARSA agent (sim only)
+
+utils/                               # Shared utilities (e.g., latency model wrapper)
+```
+
+Entry points are typically either:
+- `python -m algorithms.<algo>.train_sim ...` for simulation training (where available)
+- `harness_physical.py --agent_type=...` for physical runs (loads `algorithms/<algo>/agent_*.py`)
+
+
+Below is the original, unmodified repository README
+
 # Physical Atari
 
 **Physical Atari** is a platform for evaluating reinforcement learning (RL) algorithms.
