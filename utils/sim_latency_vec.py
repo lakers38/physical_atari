@@ -12,8 +12,8 @@ from gymnasium.vector import SyncVectorEnv, VectorEnvWrapper
 from imageio import v2 as imageio
 from tqdm import tqdm
 
-from utils.latency_wrap.wrapper_v0_2 import LatencyModel
-from vector_agents import VectorAgent
+from .latency_wrap.wrapper_v0_2 import LatencyModel
+from .vector_agents import VectorAgent
 
 import wandb
 

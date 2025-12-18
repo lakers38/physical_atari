@@ -7,7 +7,7 @@ from importlib import import_module
 from ale_py import Action, ALEInterface, LoggerMode, roms
 import wandb
 
-from utils.latency_wrap.wrapper_v0_2 import LatencyModel
+from .latency_wrap.wrapper_v0_2 import LatencyModel
 
 
 SUPPORTED_AGENTS = {

@@ -7,18 +7,11 @@
 ## Training in Simulation
 
 ```bash
-python algorithms/dqn/train_sim.py \
+python utils/sim_latency_vec.py \
+  --agent agent_dqn \
   --env ALE/MsPacman-v5 \
   --total_timesteps 1000000 \
   --device cuda
-```
-
-With latency simulation:
-```bash
-python algorithms/dqn/train_sim.py \
-  --env ALE/MsPacman-v5 \
-  --mode sim_lat \
-  --latency-model-dir ./utils/latency_wrap
 ```
 
 ## Physical Hardware

@@ -14,18 +14,11 @@
 ## Training in Simulation
 
 ```bash
-python algorithms/rainbow_dqn/train_sim.py \
+python algorithms/utils/sim_latency_vec.py \
+  --agent agent_rainbow \
   --env ALE/MsPacman-v5 \
   --total_timesteps 10000000 \
   --device cuda
-```
-
-With latency simulation:
-```bash
-python algorithms/rainbow_dqn/train_sim.py \
-  --env ALE/MsPacman-v5 \
-  --mode sim_lat \
-  --latency-model-dir ./utils/latency_wrap
 ```
 
 ## Physical Hardware

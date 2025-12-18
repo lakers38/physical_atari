@@ -8,8 +8,8 @@ import torch.nn.functional as F
 
 from typing import Optional
 
-from agent_utils import preprocess_batch
-from vector_agents import VectorAgent
+from utils.agent_utils import preprocess_batch
+from utils.vector_agents import VectorAgent
 
 
 class QNetwork(nn.Module):

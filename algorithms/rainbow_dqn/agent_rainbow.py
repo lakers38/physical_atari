@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from vector_agents import VectorAgent
-from agent_utils import preprocess_batch
+from utils.vector_agents import VectorAgent
+from utils.agent_utils import preprocess_batch
 
 class NoisyLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, sigma_init: float = 0.5):

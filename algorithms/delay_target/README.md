@@ -12,7 +12,8 @@
 
 Requires latency simulation:
 ```bash
-python algorithms/delay_target/train_sim.py \
+python algorithms/delay_target/sim_latency.py \
+  --agent agent_delay_target \
   --env ALE/MsPacman-v5 \
   --mode sim_lat \
   --latency-model-dir ./utils/latency_wrap \
