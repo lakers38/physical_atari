@@ -3,7 +3,7 @@
 
 import numpy as np
 import pytest
-from priority_tree import PriorityTree
+from algorithms.r2d2.priority_tree import PriorityTree
 
 
 class TestPriorityTree:

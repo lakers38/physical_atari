@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
-"""
-Test ReplayBuffer components in isolation
-"""
+"""Test ReplayBuffer components in isolation."""
 
 import multiprocessing as mp
-import os
-import sys
-import time
 
 import numpy as np
-import torch
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from r2d2 import config
-from r2d2.replay_buffer import Block, ReplayBuffer
+from algorithms.r2d2 import config
+from algorithms.r2d2.replay_buffer import Block, ReplayBuffer
 
 
 def create_dummy_block(block_length=120, learning_steps=80, action_dim=18):
@@ -64,7 +56,7 @@ def test_priority_tree():
     print("TEST 1: PriorityTree")
     print("=" * 60)
 
-    from r2d2.priority_tree import PriorityTree
+    from algorithms.r2d2.priority_tree import PriorityTree
 
     capacity = 1000
     tree = PriorityTree(capacity, alpha=0.6, beta=0.4)

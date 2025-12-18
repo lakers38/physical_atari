@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Train a Swift-Sarsa controller on Ms. Pacman in simulation using a transformer backbone
+Train a Swift-Sarsa controller on Ms. Pacman in simulation using a transformer or CNN backbone
 to produce features. The code mirrors the SAC training scaffolding (argparse, wandb,
 frame skip/stack, preprocessing, recording) but keeps a linear control layer on top
 of a swappable transformer encoder (default: RF-DETR Nano/Small/Medium/etc).
@@ -10,19 +10,17 @@ import argparse
 import json
 import math
 import os
-import pickle
 import random
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
 import ale_py  # noqa: F401 - registers ALE envs
 import gymnasium as gym
 import numpy as np
 import swift_sarsa
 import torch
-import torch.nn.functional as F
 import torchvision.models as tv_models
 import torchvision.transforms.functional as TVF
 from gymnasium import spaces
@@ -37,6 +35,7 @@ from datetime import datetime
 import torch.nn as nn
 from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall  # type: ignore
 from rfdetr.util.misc import nested_tensor_from_tensor_list  # type: ignore
+from framework.Logger import logger
 
 
 # -----------------------------
@@ -102,115 +101,22 @@ class ActionSetWrapper(gym.Wrapper):
         elif reduce_action_set == 2:
             # ALE action indices: UP=2, DOWN=5, LEFT=4, RIGHT=3
             self.action_mapping = [2, 5, 4, 3]  # Switch back to [2, 5, 4, 3] for full action space
-            print(f"[ActionSetWrapper] Restricting {game_name} to 4 directional actions only")
+            logger.info("swift_sarsa: ActionSetWrapper restricting %s to 4 directional actions only", game_name)
         else:
             self.action_mapping = None
 
         if self.action_mapping is not None:
             self.action_space = spaces.Discrete(len(self.action_mapping))
-            print(
-                f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}"
+            logger.info(
+                "swift_sarsa: ActionSetWrapper action space reduced to %s actions: %s",
+                len(self.action_mapping),
+                self.action_mapping,
             )
 
     def step(self, action):
         if self.action_mapping is not None:
             action = self.action_mapping[action]
         return self.env.step(action)
-
-
-# -----------------------------
-# Rainbow Network Components
-# -----------------------------
-# class NoisyLinear(nn.Module):
-#     """Noisy linear layer for Rainbow DQN."""
-#     def __init__(self, in_features: int, out_features: int, std_init: float = 0.5):
-#         super().__init__()
-#         self.in_features = in_features
-#         self.out_features = out_features
-#         self.std_init = std_init
-
-#         self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
-#         self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
-#         self.register_buffer("weight_epsilon", torch.empty(out_features, in_features))
-
-#         self.bias_mu = nn.Parameter(torch.empty(out_features))
-#         self.bias_sigma = nn.Parameter(torch.empty(out_features))
-#         self.register_buffer("bias_epsilon", torch.empty(out_features))
-
-#         self.reset_parameters()
-#         self.reset_noise()
-
-#     def reset_parameters(self):
-#         mu_range = 1.0 / math.sqrt(self.in_features)
-#         self.weight_mu.data.uniform_(-mu_range, mu_range)
-#         self.weight_sigma.data.fill_(self.std_init / math.sqrt(self.in_features))
-#         self.bias_mu.data.uniform_(-mu_range, mu_range)
-#         self.bias_sigma.data.fill_(self.std_init / math.sqrt(self.out_features))
-
-#     def reset_noise(self):
-#         epsilon_in = self._scale_noise(self.in_features)
-#         epsilon_out = self._scale_noise(self.out_features)
-#         self.weight_epsilon.copy_(epsilon_out.outer(epsilon_in))
-#         self.bias_epsilon.copy_(epsilon_out)
-
-#     def _scale_noise(self, size: int):
-#         x = torch.randn(size, device=self.weight_mu.device)
-#         return x.sign().mul_(x.abs().sqrt_())
-
-#     def forward(self, x):
-#         if self.training:
-#             weight = self.weight_mu + self.weight_sigma * self.weight_epsilon
-#             bias = self.bias_mu + self.bias_sigma * self.bias_epsilon
-#         else:
-#             weight = self.weight_mu
-#             bias = self.bias_mu
-#         return F.linear(x, weight, bias)
-
-
-# class RainbowNetwork(nn.Module):
-#     """Rainbow DQN network with distributional RL and noisy nets."""
-#     def __init__(self, in_channels: int, num_actions: int, num_atoms: int):
-#         super().__init__()
-#         self.num_actions = num_actions
-#         self.num_atoms = num_atoms
-
-#         self.conv = nn.Sequential(
-#             nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
-#             nn.ReLU(),
-#             nn.Conv2d(32, 64, kernel_size=4, stride=2),
-#             nn.ReLU(),
-#             nn.Conv2d(64, 64, kernel_size=3, stride=1),
-#             nn.ReLU(),
-#         )
-
-#         self.fc_input_dim = 64 * 7 * 7
-
-#         self.value_stream = nn.Sequential(NoisyLinear(self.fc_input_dim, 512), nn.ReLU(), NoisyLinear(512, num_atoms))
-#         self.adv_stream = nn.Sequential(
-#             NoisyLinear(self.fc_input_dim, 512),
-#             nn.ReLU(),
-#             NoisyLinear(512, num_actions * num_atoms),
-#         )
-
-#     def reset_noise(self):
-#         for module in self.modules():
-#             if isinstance(module, NoisyLinear):
-#                 module.reset_noise()
-
-#     def forward(self, x):
-#         features = self.conv(x)
-#         features = features.view(features.size(0), -1)
-
-#         value = self.value_stream(features).view(-1, 1, self.num_atoms)
-#         advantage = self.adv_stream(features).view(-1, self.num_actions, self.num_atoms)
-#         q_atoms = value + (advantage - advantage.mean(dim=1, keepdim=True))
-#         log_probs = F.log_softmax(q_atoms, dim=2)
-#         probs = torch.exp(log_probs)
-#         return probs, log_probs
-
-#     def q_values(self, x, support):
-#         probs, _ = self.forward(x)
-#         return torch.sum(probs * support.view(1, 1, -1), dim=2)
 
 
 # -----------------------------
@@ -418,7 +324,7 @@ class PPOBackbone(FeatureBackbone):
 
         # Load weights from PPO checkpoint if provided
         if weights_path is not None:
-            print(f"[PPOBackbone] Loading weights from {weights_path}")
+            logger.info("swift_sarsa: PPOBackbone loading weights from %s", weights_path)
             self._load_ppo_weights(weights_path, frame_stack, frame_size)
 
         self.encoder.eval()
@@ -432,7 +338,11 @@ class PPOBackbone(FeatureBackbone):
                 dummy_output = self.encoder(dummy_input)
                 flattened = dummy_output.view(dummy_output.size(0), -1)
                 self.feature_dim = flattened.size(1)
-                print(f"[PPOBackbone] Computed feature_dim={self.feature_dim} for frame_size={frame_size}")
+                logger.info(
+                    "swift_sarsa: PPOBackbone computed feature_dim=%s for frame_size=%s",
+                    self.feature_dim,
+                    frame_size,
+                )
 
         self.checkpoint_in_channels = in_channels
 
@@ -446,14 +356,14 @@ class PPOBackbone(FeatureBackbone):
             # Try loading as SB3 model first
             from stable_baselines3 import PPO
 
-            print(f"[PPOBackbone] Loading SB3 PPO model from {weights_path}")
+            logger.info("swift_sarsa: PPOBackbone loading SB3 PPO model from %s", weights_path)
             ppo_model = PPO.load(weights_path, device=self.device)
 
             # Extract feature extractor CNN weights
             feature_extractor = ppo_model.policy.features_extractor.cnn
 
             input_shape = feature_extractor[0].weight.shape
-            print(input_shape, frame_stack)
+            logger.info("swift_sarsa: PPOBackbone checkpoint input_shape=%s frame_stack=%s", input_shape, frame_stack)
 
             # assert input_shape[1] == frame_stack, f"input shape {input_shape} != frame_stack {frame_stack}"
 
@@ -461,7 +371,7 @@ class PPOBackbone(FeatureBackbone):
             conv0_weight = feature_extractor[0].weight
             detected_channels = conv0_weight.shape[1]
 
-            print(f"[PPOBackbone] Detected frame_stack={input_shape[1]} from checkpoint")
+            logger.info("swift_sarsa: PPOBackbone detected frame_stack=%s from checkpoint", input_shape[1])
 
             # Recreate encoder with correct channels
             self.encoder = nn.Sequential(
@@ -488,13 +398,13 @@ class PPOBackbone(FeatureBackbone):
                 # Flatten to get feature dimension
                 flattened = dummy_output.view(dummy_output.size(0), -1)
                 self.feature_dim = flattened.size(1)
-                print(f"[PPOBackbone] Computed feature_dim={self.feature_dim} from dummy forward pass")
+                logger.info("swift_sarsa: PPOBackbone computed feature_dim=%s from dummy forward pass", self.feature_dim)
 
-            print("[PPOBackbone] Successfully loaded CNN weights from PPO checkpoint")
+            logger.info("swift_sarsa: PPOBackbone loaded CNN weights from PPO checkpoint")
 
         except Exception as e:
-            print(f"[PPOBackbone] Failed to load as SB3 model: {e}")
-            print("[PPOBackbone] Attempting to load as raw state_dict...")
+            logger.error("swift_sarsa: PPOBackbone failed to load as SB3 model: %s", e)
+            logger.info("swift_sarsa: PPOBackbone attempting to load as raw state_dict...")
             raise (Exception("PPO FAILED TO LOAD"))
 
     def _prep_obs(self, obs: np.ndarray) -> torch.Tensor:
@@ -535,14 +445,15 @@ class RainbowBackbone(FeatureBackbone):
 
         # Load checkpoint first to detect architecture
         if weights_path is not None:
-            print(f"[RainbowBackbone] Loading weights from {weights_path}")
+            logger.info("swift_sarsa: RainbowBackbone loading weights from %s", weights_path)
             checkpoint = torch.load(weights_path, map_location=self.device)
 
             # Handle different checkpoint formats
             if isinstance(checkpoint, dict) and "network_state_dict" in checkpoint:
                 state_dict = checkpoint["network_state_dict"]
-                print(
-                    f"[RainbowBackbone] Loaded training checkpoint (frame_count: {checkpoint.get('frame_count', 'unknown')})"
+                logger.info(
+                    "swift_sarsa: RainbowBackbone loaded training checkpoint frame_count=%s",
+                    checkpoint.get('frame_count', 'unknown'),
                 )
             elif isinstance(checkpoint, dict):
                 state_dict = checkpoint
@@ -554,9 +465,7 @@ class RainbowBackbone(FeatureBackbone):
             checkpoint_in_channels = conv0_shape[1]
             fc_input_dim = state_dict['value_stream.0.weight_mu'].shape[1]
 
-            print("[RainbowBackbone] Detected architecture:")
-            print(f"  - Input channels: {checkpoint_in_channels}")
-            print(f"  - FC input dim: {fc_input_dim}")
+            logger.info("swift_sarsa: RainbowBackbone detected architecture input_channels=%s fc_input_dim=%s", checkpoint_in_channels, fc_input_dim)
 
             # [RainbowBackbone] Loading weights from rainbow_dqn_checkpoint.pt
             # [RainbowBackbone] Loaded training checkpoint (frame_count: 549314)
@@ -577,7 +486,7 @@ class RainbowBackbone(FeatureBackbone):
             # Load only conv weights from checkpoint
             conv_state_dict = {k.replace('conv.', ''): v for k, v in state_dict.items() if k.startswith('conv.')}
             self.encoder.load_state_dict(conv_state_dict)
-            print("[RainbowBackbone] Conv encoder weights loaded successfully")
+            logger.info("swift_sarsa: RainbowBackbone conv encoder weights loaded successfully")
 
             self.checkpoint_in_channels = checkpoint_in_channels
 
@@ -591,8 +500,10 @@ class RainbowBackbone(FeatureBackbone):
                 dummy_output = self.encoder(dummy_input)
                 flattened = dummy_output.view(dummy_output.size(0), -1)
                 self.feature_dim = flattened.size(1)
-                print(
-                    f"[RainbowBackbone] Computed feature_dim={self.feature_dim} from dummy forward pass (checkpoint had fc_input_dim={fc_input_dim})"
+                logger.info(
+                    "swift_sarsa: RainbowBackbone computed feature_dim=%s (checkpoint fc_input_dim=%s)",
+                    self.feature_dim,
+                    fc_input_dim,
                 )
         else:
             # No checkpoint - use default architecture
@@ -616,7 +527,11 @@ class RainbowBackbone(FeatureBackbone):
                 dummy_output = self.encoder(dummy_input)
                 flattened = dummy_output.view(dummy_output.size(0), -1)
                 self.feature_dim = flattened.size(1)
-                print(f"[RainbowBackbone] Computed feature_dim={self.feature_dim} for frame_size={frame_size}")
+                logger.info(
+                    "swift_sarsa: RainbowBackbone computed feature_dim=%s for frame_size=%s",
+                    self.feature_dim,
+                    frame_size,
+                )
 
         # Normalization values (ImageNet defaults)
         self.means = [0.485, 0.456, 0.406]
@@ -678,7 +593,7 @@ def collect_swiftsarsa_stats(agent) -> dict[str, float]:
         stats.update(_stat_dict(agent.algo.get_beta(), "beta"))
         stats.update(_stat_dict(agent.algo.get_last_alpha(), "last_alpha"))
     except Exception as e:
-        print(f"[stats] failed to collect SwiftSarsa internals: {e}")
+        logger.warning("swift_sarsa: Failed to collect SwiftSarsa internals: %s", e)
     return stats
 
 
@@ -797,7 +712,7 @@ def create_single_atari_env(
     env = RecordEpisodeStatistics(env)
 
     if video_path:
-        print(f"[Video] Recording every {video_freq} episodes to {video_path}")
+        logger.info("swift_sarsa: Recording every %s episodes to %s", video_freq, video_path)
         env = RecordVideo(
             env,
             video_folder=video_path,
@@ -841,14 +756,14 @@ def save_agent_state(agent: SwiftSarsaAgent, path: str, note: str = ""):
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
         np.savez_compressed(path, **save_dict)
-        print(f"[Save] Saved agent state to {path}.npz ({note})")
+        logger.info("swift_sarsa: Saved agent state to %s.npz (%s)", path, note)
         return True
     except Exception as e:
-        print(f"[Save] Failed to save agent state: {e}")
+        logger.error("swift_sarsa: Failed to save agent state: %s", e)
         return False
 
 
-def load_agent_state(path: str) -> Optional[Dict]:
+def load_agent_state(path: str) -> Optional[dict]:
     """
     Load Swift-SARSA weights from a saved checkpoint.
 
@@ -869,12 +784,16 @@ def load_agent_state(path: str) -> Optional[Dict]:
             'feature_dim': int(data['feature_dim']),
             'note': str(data['note']),
         }
-        print(f"[Load] Loaded agent state from {path}")
-        print(f"       Actions: {loaded['num_actions']}, Feature dim: {loaded['feature_dim']}")
-        print(f"       Weights shape: {loaded['weights'].shape}")
+        logger.info(
+            "swift_sarsa: Loaded agent state from %s (actions=%s feature_dim=%s weights_shape=%s)",
+            path,
+            loaded['num_actions'],
+            loaded['feature_dim'],
+            loaded['weights'].shape,
+        )
         return loaded
     except Exception as e:
-        print(f"[Load] Failed to load agent state from {path}: {e}")
+        logger.error("swift_sarsa: Failed to load agent state from %s: %s", path, e)
         return None
 
 
@@ -894,7 +813,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
     # Choose stacking mode based on backbone requirements
     if getattr(backbone, 'needs_pixel_stacking', False):
         # Pixel-level stacking: maintain queue of raw frames
-        print(f"[Train] Using pixel-level frame stacking for {type(backbone).__name__}")
+        logger.info("swift_sarsa: Using pixel-level frame stacking for %s", type(backbone).__name__)
         frame_queue: deque = deque(maxlen=args.frame_stack)
 
         # Convert to grayscale if using pixel stacking backbones
@@ -914,7 +833,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
         use_pixel_stacking = True
     else:
         # Feature-level stacking: maintain queue of features (original behavior)
-        print(f"[Train] Using feature-level stacking for {type(backbone).__name__}")
+        logger.info("swift_sarsa: Using feature-level stacking for %s", type(backbone).__name__)
         feat_queue: deque = deque(maxlen=args.frame_stack)
         t_inf = time.time()
         first_feat = backbone(obs)
@@ -939,7 +858,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
     inference_timing = deque(maxlen=1000)
     inference_timing.append(first_inf_time)
 
-    logger = []
+    episode_log = []
     wandb_run = init_wandb(args, agent.feature_dim)
 
     while global_step < args.total_frames:
@@ -1005,7 +924,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
                 }
                 wandb_log.update(collect_swiftsarsa_stats(agent))
                 wandb_run.log(wandb_log)
-            logger.append((global_step, episode_reward, episode_len))
+            episode_log.append((global_step, episode_reward, episode_len))
             # Checkpointing disabled (pybind object not picklable)
             episode_reward = 0.0
             episode_len = 0
@@ -1063,14 +982,15 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
 
         if global_step % 1000 == 0:
             avg_env = np.mean(timing_window) if timing_window else 0.0
-            recent_rewards = [entry[1] for entry in logger[-100:]]
+            recent_rewards = [entry[1] for entry in episode_log[-100:]]
             avg_reward_100 = float(np.mean(recent_rewards)) if recent_rewards else 0.0
-            print(
-                f"[stats] step={global_step} "
-                f"avg_env_step_ms={avg_env * 1000:.3f} "
-                f"avg_reward_100ep={avg_reward_100:.2f} "
-                f"avg_len={episode_len:.2f} "
-                f"feature_norm={episode_feat_norms[-1] if episode_feat_norms else 0:.4f}"
+            logger.info(
+                "swift_sarsa: stats step=%s avg_env_step_ms=%.3f avg_reward_100ep=%.2f avg_len=%.2f feature_norm=%.4f",
+                global_step,
+                avg_env * 1000.0,
+                avg_reward_100,
+                episode_len,
+                episode_feat_norms[-1] if episode_feat_norms else 0.0,
             )
     # Save final agent state
     final_path = os.path.join(paths["experiment_dir"], "models", "final_sarsa_weights")
@@ -1078,7 +998,7 @@ def train_loop(env: gym.Env, backbone: FeatureBackbone, agent: SwiftSarsaAgent, 
 
     if wandb_run:
         wandb_run.finish()
-    return logger
+    return episode_log
 
 
 def build_backbone(args, sample_obs: np.ndarray) -> FeatureBackbone:
@@ -1237,8 +1157,12 @@ def main():
 
     agent = SwiftSarsaAgent(num_actions=num_actions, feature_dim=feature_dim, cfg=agent_cfg)
 
-    print(
-        f"Starting training: total_frames={args.total_frames}, actions={num_actions}, feature_dim={feature_dim}, stacking_mode={'pixel' if getattr(backbone, 'needs_pixel_stacking', False) else 'feature'}"
+    logger.info(
+        "swift_sarsa: Starting training total_frames=%s actions=%s feature_dim=%s stacking_mode=%s",
+        args.total_frames,
+        num_actions,
+        feature_dim,
+        "pixel" if getattr(backbone, 'needs_pixel_stacking', False) else "feature",
     )
     paths = {
         "experiment_dir": experiment_dir,

@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 import torch
 
+from framework.Logger import logger
+
 from .agent_ppo import Agent
 
 
@@ -49,7 +51,7 @@ def test_bandit_prefers_rewarded_action(reward_prob, threshold, steps):
         action = agent.frame(obs, reward, end_of_episode=0)
         action_counts[action] += 1
         prev_action = action
-        print(
+        logger.info(
             f"o: {t}\ta: {action}\tr: {reward}\tbuffer_size: {agent.rollout_buffer.size()}\tfslt:{agent.frames_since_train}"
         )
 
@@ -88,7 +90,7 @@ def test_bandit_with_life_loss_terminals(life_loss_every):
         action_counts[action] += 1
         prev_action = action
         time.sleep(0.01)
-        print(f"o: {t}\ta: {action}\tr: {reward}\tbuffer_size: {agent.rollout_buffer.size()}\tend: {end_of_episode}")
+        logger.info(f"o: {t}\ta: {action}\tr: {reward}\tbuffer_size: {agent.rollout_buffer.size()}\tend: {end_of_episode}")
 
         if agent.training_thread is not None and not agent.training_thread.is_alive():
             agent.training_thread.join()
@@ -129,7 +131,7 @@ def test_bandit_reward_flip_adapts_policy():
         action_counts[action] += 1
         prev_action = action
         time.sleep(0.01)
-        print(f"o: {t}\ta: {action}\tr: {reward}\ttarget: {current_target}\tbuffer_size: {agent.rollout_buffer.size()}")
+        logger.info(f"o: {t}\ta: {action}\tr: {reward}\ttarget: {current_target}\tbuffer_size: {agent.rollout_buffer.size()}")
 
         if agent.training_thread is not None and not agent.training_thread.is_alive():
             agent.training_thread.join()
@@ -141,7 +143,7 @@ def test_bandit_reward_flip_adapts_policy():
             pre_flip_probs = (
                 agent.actor_model.policy.get_distribution(obs_tensor).distribution.probs[0].detach().cpu().numpy()
             )
-            print(f"Post-flip snapshot probs: {pre_flip_probs}")
+            logger.info(f"Post-flip snapshot probs: {pre_flip_probs}")
 
     if agent.training_thread is not None:
         agent.training_thread.join(timeout=10)

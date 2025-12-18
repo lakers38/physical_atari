@@ -22,7 +22,6 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 import zlib
 from abc import ABC, abstractmethod
 from enum import Enum

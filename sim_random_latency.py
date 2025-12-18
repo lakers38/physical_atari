@@ -1,7 +1,6 @@
 from ale_py import ALEInterface, LoggerMode, Action, roms
 from agent_random import Agent
 from utils.latency_wrap.wrapper_v0_2 import LatencyModel
-import numpy as np
 
 # this loads the ALEInterface(): https://ale.farama.org/python-interface/
 ale = ALEInterface()

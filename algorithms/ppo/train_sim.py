@@ -31,6 +31,7 @@ import wandb
 from wandb.integration.sb3 import WandbCallback
 
 from utils.latency_wrap.wrapper_v0_2 import BatchedLatencyModel
+from framework.Logger import logger
 
 gym.register_envs(ale_py)
 
@@ -75,12 +76,12 @@ class VecLatencyWrapper:
 
         if action_mapping is not None:
             self.action_space = spaces.Discrete(len(action_mapping))
-            print(f"[VecLatencyWrapper] Using action mapping: {action_mapping}")
+            logger.info("ppo: VecLatencyWrapper using action mapping: %s", action_mapping)
         else:
             self.action_space = venv.action_space
 
         self.latency_model = BatchedLatencyModel(latency_model_dir, self.num_envs)
-        print(f"[VecLatencyWrapper] Initialized batched latency model for {self.num_envs} environments")
+        logger.info("ppo: VecLatencyWrapper initialized batched latency model for %s environments", self.num_envs)
 
     def step_async(self, actions):
         """Apply latency model to all actions in one batched forward pass"""
@@ -159,14 +160,14 @@ def create_atari_env_with_latency(
     action_mapping = None
     if reduce_action_set == 2:
         action_mapping = [2, 5, 4, 3]
-        print("[ActionRestriction] Will use reduced action space")
+        logger.info("ppo: ActionRestriction using reduced action space")
 
     if simulate_latency:
-        print(f"[sim_lat] Applying latency simulation to {env_name}")
+        logger.info("ppo: Applying latency simulation to %s", env_name)
         env = VecLatencyWrapper(env, latency_model_dir=latency_model_dir, action_mapping=action_mapping)
     elif action_mapping is not None:
         env = VecActionSetWrapper(env, action_mapping)
-        print(f"[ActionRestriction] Applied action space reduction to {len(action_mapping)} actions: {action_mapping}")
+        logger.info("ppo: ActionRestriction applied mapping (%s actions): %s", len(action_mapping), action_mapping)
 
     env = VecFrameStack(env, n_stack=n_stack)
 
@@ -174,7 +175,7 @@ def create_atari_env_with_latency(
         env = VecMonitor(env, filename=os.path.join(monitor_path, f"{env_name.replace('/', '_')}_monitor.csv"))
 
     if record_video and video_path:
-        print(f"[Video] Recording videos every {video_freq} steps to {video_path}")
+        logger.info("ppo: Recording videos every %s steps to %s", video_freq, video_path)
         env = VecVideoRecorder(
             env,
             video_path,
@@ -267,8 +268,7 @@ def train_agent(
             monitor_gym=True,
             save_code=True,
         )
-        print(f"[WandB] Initialized run: {wandb_run.name}")
-        print(f"[WandB] View at: {wandb_run.url}")
+        logger.info("ppo: WandB initialized run=%s url=%s", wandb_run.name, wandb_run.url)
 
     monitor_path = os.path.join(experiment_dir, "logs", "monitor") if experiment_dir else None
     video_path = os.path.join(experiment_dir, "videos") if experiment_dir and record_videos else None
@@ -306,12 +306,12 @@ def train_agent(
     tensorboard_log_dir = os.path.join(experiment_dir, "logs", "tensorboard") if experiment_dir else "./logs/"
 
     if load_model_path and os.path.exists(load_model_path):
-        print(f"Loading pre-trained model from {load_model_path}")
+        logger.info("ppo: Loading pre-trained model from %s", load_model_path)
         model = PPO.load(load_model_path, env=env, device=device)
         if learning_rate:
             model.learning_rate = learning_rate
     else:
-        print("Creating new PPO model")
+        logger.info("ppo: Creating new PPO model")
         model = PPO(
             "CnnPolicy",
             env,
@@ -365,20 +365,17 @@ def train_agent(
             verbose=2,
         )
         callbacks.append(wandb_callback)
-        print("[WandB] Callback added - models will be uploaded")
+        logger.info("ppo: WandB callback added - models will be uploaded")
 
     mode_name = "sim_lat (with LatencyModel)" if simulate_latency else "sim (no latency)"
-    print(f"\n{'=' * 60}")
-    print(f"Starting Training: {mode_name}")
-    print(f"{'=' * 60}")
-    print(f"Environment: {env_name}")
-    print(f"Total timesteps: {total_timesteps:,}")
-    print(f"Latency simulation: {simulate_latency}")
-    print(f"Device: {device}")
-    print(f"Learning rate: {learning_rate}")
+    logger.info("Starting Training: %s", mode_name)
+    logger.info("Environment: %s", env_name)
+    logger.info("Total timesteps: %s", f"{total_timesteps:,}")
+    logger.info("Latency simulation: %s", simulate_latency)
+    logger.info("Device: %s", device)
+    logger.info("Learning rate: %s", learning_rate)
     if use_wandb and wandb_run:
-        print(f"WandB: {wandb_run.url}")
-    print(f"{'=' * 60}\n")
+        logger.info("WandB: %s", wandb_run.url)
 
     model.learn(
         total_timesteps=total_timesteps,
@@ -388,11 +385,11 @@ def train_agent(
     )
 
     model.save(model_save_path)
-    print(f"\nTraining complete! Model saved to: {model_save_path}")
+    logger.info("ppo: Training complete! Model saved to: %s", model_save_path)
 
     if use_wandb and wandb_run is not None:
         wandb_run.finish()
-        print("[WandB] Run finished and uploaded")
+        logger.info("ppo: WandB run finished and uploaded")
 
     return model, model_save_path
 
@@ -408,10 +405,10 @@ def main():
         type=str,
         default="sim_lat",
         choices=["sim", "sim_lat"],
-        help="Training mode: sim (no latency) or sim_lat (with LatencyModel, default)",
+        help="Training mode: sim (no latency) or sim_lat (with LatencyModel) (default: sim_lat)",
     )
     parser.add_argument(
-        "--latency-model-dir", type=str, default="./latency_wrap", help="Directory containing LatencyModel weights"
+        "--latency-model-dir", type=str, default="./utils/latency_wrap", help="Directory containing LatencyModel weights"
     )
     parser.add_argument("--output-dir", type=str, default="outputs/ppo/", help="Base directory for outputs")
     parser.add_argument(
@@ -508,19 +505,16 @@ def main():
         n_stack=args.n_stack,
     )
 
-    print(f"\n{'=' * 60}")
-    print("Training completed successfully!")
-    print(f"{'=' * 60}")
-    print(f"Model saved at: {model_path}")
-    print(f"Experiment directory: {experiment_dir}")
-    print("View training progress:")
-    print(f"  tensorboard --logdir {os.path.join(experiment_dir, 'logs', 'tensorboard')}")
-    print("\nNext step: Transfer to physical hardware")
-    print("  python harness_physical.py \\")
-    print("    --agent_type=agent_ppo \\")
-    print(f"    --load_model={model_path}.zip \\")
-    print("    --total_frames=500000")
-    print(f"{'=' * 60}\n")
+    logger.info("Training completed successfully!")
+    logger.info("Model saved at: %s", model_path)
+    logger.info("Experiment directory: %s", experiment_dir)
+    logger.info("View training progress:")
+    logger.info("  tensorboard --logdir %s", os.path.join(experiment_dir, 'logs', 'tensorboard'))
+    logger.info("Next step: Transfer to physical hardware")
+    logger.info("  python harness_physical.py \\")
+    logger.info("    --agent_type=agent_ppo \\")
+    logger.info("    --load_model=%s.zip \\", model_path)
+    logger.info("    --total_frames=500000")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ import time
 from copy import deepcopy
 from typing import Optional
 
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -13,7 +12,7 @@ import wandb
 
 from . import config
 from .actor import calculate_mixed_td_errors
-from .model import Network
+from framework.Logger import logger
 
 
 class Learner:
@@ -72,10 +71,9 @@ class Learner:
             return None
 
         try:
-            import numpy as np
-            from environment import create_env
+            from .environment import create_env
             from gymnasium.wrappers import RecordVideo
-            from model import AgentState
+            from .model import AgentState
 
             env = create_env(env_name=self.env_name, noop_start=False, render_mode="rgb_array")
             env = RecordVideo(
@@ -128,7 +126,7 @@ class Learner:
             return episode_reward
 
         except Exception as e:
-            print(f"Warning: Failed to record video: {e}")
+            logger.warning("r2d2: Failed to record video: %s", e)
             return None
 
     def prepare_data(self):
@@ -147,7 +145,7 @@ class Learner:
         start_time = time.time()
         while self.num_updates < config.training_steps:
             if self.num_updates % 1000 == 0:
-                print(f"{self.num_updates} / {config.training_steps} (learner: num_updates/total training steps)")
+                logger.info("r2d2: %s / %s learner updates", self.num_updates, config.training_steps)
 
             while not self.batched_data:
                 time.sleep(1)
@@ -291,10 +289,10 @@ class Learner:
                     'target_net_state_dict': self.target_net.state_dict(),
                 }
                 torch.save(checkpoint, save_path)
-                print(f"Model saved to {save_path}")
+                logger.info("r2d2: Model saved to %s", save_path)
 
                 if self.video_dir:
-                    print(f"Recording evaluation video (step {self.num_updates})...")
+                    logger.info("r2d2: Recording evaluation video (step %s)...", self.num_updates)
                     os.makedirs(self.video_dir, exist_ok=True)
 
                     eval_reward = self.record_video_episode(
@@ -302,7 +300,7 @@ class Learner:
                     )
 
                     if eval_reward is not None:
-                        print(f"Evaluation episode reward: {eval_reward:.2f}")
+                        logger.info("r2d2: Evaluation episode reward: %.2f", eval_reward)
 
                         if self.use_wandb:
                             try:
@@ -317,9 +315,9 @@ class Learner:
                                         },
                                         step=self.num_updates,
                                     )
-                                    print(f"Video logged to wandb: {video_path}")
+                                    logger.info("r2d2: Video logged to wandb: %s", video_path)
                             except Exception as e:
-                                print(f"Warning: Failed to log video to wandb: {e}")
+                                logger.warning("r2d2: Failed to log video to wandb: %s", e)
 
     @staticmethod
     def value_rescale(value, eps=1e-3):

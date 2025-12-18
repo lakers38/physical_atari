@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import os
-import cv2
-import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Deque, Optional
-from collections import deque
+from typing import Optional
 
 from agent_utils import preprocess_batch
 from vector_agents import VectorAgent

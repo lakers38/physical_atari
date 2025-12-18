@@ -1,4 +1,3 @@
-import os
 from collections import deque
 
 import ale_py
@@ -8,6 +7,7 @@ import numpy as np
 
 from . import config
 from utils.latency_wrap.wrapper_v0_2 import LatencyModel
+from framework.Logger import logger
 
 gym.register_envs(ale_py)
 
@@ -39,10 +39,10 @@ class NoopResetEnv(gym.Wrapper):
 
 
 class LatencyWrapper(gym.Wrapper):
-    def __init__(self, env, latency_model_dir="./latency_wrap"):
+    def __init__(self, env, latency_model_dir="./utils/latency_wrap"):
         super().__init__(env)
         self.latency_model = LatencyModel(directory_with_weights=latency_model_dir)
-        print(f"[LatencyWrapper] Initialized with weights from {latency_model_dir}")
+        logger.info("r2d2: LatencyWrapper initialized with weights from %s", latency_model_dir)
 
     def step(self, action):
         ale_action = ale_py.Action(int(action))
@@ -109,7 +109,7 @@ def create_env(
     noop_start=True,
     render_mode=None,
     simulate_latency=False,
-    latency_model_dir="./latency_wrap",
+    latency_model_dir="./utils/latency_wrap",
 ):
     env = gym.make(
         env_name,
@@ -122,7 +122,7 @@ def create_env(
 
     if simulate_latency:
         env = LatencyWrapper(env, latency_model_dir=latency_model_dir)
-        print(f"[create_env] Latency simulation enabled for {env_name}")
+        logger.info("r2d2: create_env latency simulation enabled for %s", env_name)
 
     env = WarpFrame(env)
     env = FrameStack(env, n_frames=4)

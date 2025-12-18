@@ -18,14 +18,13 @@ import random
 import re
 import shutil
 import subprocess
-import sys
 import time
 
 import cv2
 import numpy as np
 import pygame
 from ale_py import Action, ALEInterface, LoggerMode, roms
-from ale_ram_injection import GAME_RAM_CONFIG, decode_lives, decode_score_bcd, write_lives, write_score
+from .ale_ram_injection import GAME_RAM_CONFIG, decode_lives, decode_score_bcd, write_lives, write_score
 from PIL import Image
 
 ASPECT_RATIO = 4 / 3
@@ -197,7 +196,6 @@ def detect_screen(camera, detector, debug=False):
 
 def generate_data_physical(args, game, data_dir, debug=False):
     framework_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-    sys.path.insert(0, framework_path)
 
     with open(os.path.join(framework_path, args.camera_config)) as f:
         camera_config = json.load(f)

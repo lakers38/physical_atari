@@ -15,11 +15,9 @@
 import os
 import random
 import shutil
-import time
 
-import numpy as np
 from ale_py import Action, ALEInterface, LoggerMode, roms
-from ale_ram_injection import GAME_RAM_CONFIG, decode_lives, decode_score_bcd, write_lives, write_score
+from .ale_ram_injection import GAME_RAM_CONFIG, decode_lives, decode_score_bcd, write_lives, write_score
 from PIL import Image
 
 """

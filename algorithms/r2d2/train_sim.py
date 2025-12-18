@@ -9,7 +9,6 @@ with multiple parallel actors for efficient data collection and training.
 import argparse
 import os
 import random
-import sys
 from datetime import datetime
 
 import ale_py
@@ -21,13 +20,13 @@ from coolname import generate_slug
 
 import wandb
 
-sys.path.insert(0, os.path.dirname(__file__))
-import config as r2d2_config
-from actor import Actor
-from environment import create_env
-from learner import Learner
-from model import Network
-from replay_buffer import ReplayBuffer
+from algorithms.r2d2 import config as r2d2_config
+from algorithms.r2d2.actor import Actor
+from algorithms.r2d2.environment import create_env
+from algorithms.r2d2.learner import Learner
+from algorithms.r2d2.model import Network
+from algorithms.r2d2.replay_buffer import ReplayBuffer
+from framework.Logger import logger
 
 # Register ALE environments
 gym.register_envs(ale_py)
@@ -48,7 +47,7 @@ def load_checkpoint(checkpoint_path, model, device='cpu'):
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    print(f"Loading checkpoint from {checkpoint_path}...")
+    logger.info("r2d2: Loading checkpoint from %s", checkpoint_path)
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
     # Handle both old tuple format and new dict format
@@ -56,24 +55,28 @@ def load_checkpoint(checkpoint_path, model, device='cpu'):
         # Old format: (state_dict, num_updates, env_steps, training_time)
         state_dict, num_updates, env_steps, training_time = checkpoint
         model.load_state_dict(state_dict)
-        print("✓ Loaded checkpoint (old format)")
-        print(f"  - num_updates: {num_updates}")
-        print(f"  - env_steps: {env_steps}")
-        print(f"  - training_time: {training_time:.2f} minutes")
+        logger.info(
+            "r2d2: Loaded checkpoint (old format) num_updates=%s env_steps=%s training_time_min=%.2f",
+            num_updates,
+            env_steps,
+            training_time,
+        )
         return {'num_updates': num_updates, 'env_steps': env_steps, 'training_time_minutes': training_time}
     elif isinstance(checkpoint, dict):
         # New format: dictionary with keys
         model.load_state_dict(checkpoint['model_state_dict'])
-        print("✓ Loaded checkpoint (new format)")
-        print(f"  - num_updates: {checkpoint.get('num_updates', 0)}")
-        print(f"  - env_steps: {checkpoint.get('env_steps', 0)}")
+        logger.info(
+            "r2d2: Loaded checkpoint (new format) num_updates=%s env_steps=%s",
+            checkpoint.get('num_updates', 0),
+            checkpoint.get('env_steps', 0),
+        )
         if 'training_time_minutes' in checkpoint:
-            print(f"  - training_time: {checkpoint['training_time_minutes']:.2f} minutes")
+            logger.info("r2d2: Checkpoint training_time_min=%.2f", checkpoint['training_time_minutes'])
         return checkpoint
     else:
         # Just a state dict
         model.load_state_dict(checkpoint)
-        print("✓ Loaded checkpoint (state dict only)")
+        logger.info("r2d2: Loaded checkpoint (state dict only)")
         return {'num_updates': 0, 'env_steps': 0}
 
 
@@ -89,7 +92,7 @@ def train_agent_distributed(
     wandb_run_name,
     seed,
     simulate_latency=False,
-    latency_model_dir="./latency_wrap",
+    latency_model_dir="./utils/latency_wrap",
     load_model_path=None,
 ):
     """
@@ -120,17 +123,14 @@ def train_agent_distributed(
     torch.set_num_threads(1)
 
     mode_name = "sim_lat (with LatencyModel)" if simulate_latency else "sim (no latency)"
-    print(f"\n{'=' * 60}")
-    print(f"Starting Distributed R2D2 Training: {mode_name}")
-    print(f"{'=' * 60}")
-    print(f"Environment: {env_name}")
-    print(f"Total timesteps: {total_timesteps:,}")
-    print(f"Number of actors: {num_actors}")
-    print(f"Device: {device}")
-    print(f"Latency simulation: {simulate_latency}")
+    logger.info("Starting Distributed R2D2 Training: %s", mode_name)
+    logger.info("Environment: %s", env_name)
+    logger.info("Total timesteps: %s", f"{total_timesteps:,}")
+    logger.info("Number of actors: %s", num_actors)
+    logger.info("Device: %s", device)
+    logger.info("Latency simulation: %s", simulate_latency)
     if load_model_path:
-        print(f"Loading checkpoint: {load_model_path}")
-    print(f"{'=' * 60}\n")
+        logger.info("Loading checkpoint: %s", load_model_path)
 
     # Initialize wandb
     if use_wandb:
@@ -168,7 +168,7 @@ def train_agent_distributed(
                 'target_net_update_interval': r2d2_config.target_net_update_interval,
             },
         )
-        print(f"✓ WandB initialized (project: {wandb_project}, run: {wandb_run_name})\n")
+        logger.info("r2d2: WandB initialized project=%s run=%s", wandb_project, wandb_run_name)
 
     # Create a test environment to get action dimension
     test_env = create_env(env_name=env_name, noop_start=True)
@@ -184,7 +184,7 @@ def train_agent_distributed(
     if load_model_path:
         checkpoint_data = load_checkpoint(load_model_path, shared_model, device=device)
         initial_num_updates = checkpoint_data.get('num_updates', 0)
-        print(f"✓ Resuming training from update {initial_num_updates}\n")
+        logger.info("r2d2: Resuming training from update %s", initial_num_updates)
 
     # Create communication queues
     sample_queue_list = [mp.Queue() for _ in range(num_actors)]
@@ -198,7 +198,7 @@ def train_agent_distributed(
     alpha = r2d2_config.alpha
     epsilons = [base_eps ** (1 + (i / (num_actors - 1) * alpha if num_actors > 1 else 0)) for i in range(num_actors)]
 
-    print(f"Actor eps (exploration) values: {[f'{eps:.3f}' for eps in epsilons]}")
+    logger.info("r2d2: Actor epsilons: %s", [float(f"{eps:.3f}") for eps in epsilons])
 
     # Create environment factory function
     def env_factory():
@@ -238,7 +238,7 @@ def train_agent_distributed(
         actors.append(actor)
 
     # Start all processes
-    print("\nStarting processes...")
+    logger.info("r2d2: Starting processes...")
 
     # Start actor processes
     actor_procs = []
@@ -246,14 +246,14 @@ def train_agent_distributed(
         proc = mp.Process(target=actor.run)
         proc.start()
         actor_procs.append(proc)
-    print(f"  ✓ {num_actors} Actor processes started")
+    logger.info("r2d2: Started %s Actor processes", num_actors)
 
     # Start replay buffer process
     buffer_proc = mp.Process(target=replay_buffer.run)
     buffer_proc.start()
-    print("  ✓ ReplayBuffer process started")
+    logger.info("r2d2: Started ReplayBuffer process")
 
-    print("\nTraining in progress...")
+    logger.info("r2d2: Training in progress...")
 
     # Learner runs in main process
     learner.run()
@@ -270,15 +270,15 @@ def train_agent_distributed(
         model_save_path = os.path.join(experiment_dir, "models", "final_model.pth")
         os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
         torch.save(shared_model.state_dict(), model_save_path)
-        print(f"\nTraining complete! Model saved to: {model_save_path}")
+        logger.info("r2d2: Training complete! Model saved to: %s", model_save_path)
     else:
         model_save_path = None
-        print("\nTraining complete!")
+        logger.info("r2d2: Training complete!")
 
     # Cleanup wandb
     if use_wandb:
         wandb.finish()
-        print("✓ WandB run finished")
+        logger.info("r2d2: WandB run finished")
 
     return shared_model, model_save_path
 
@@ -309,8 +309,8 @@ def main():
     parser.add_argument(
         "--latency-model-dir",
         type=str,
-        default="./latency_wrap",
-        help="Directory containing LatencyModel weights (default: ./latency_wrap)",
+        default="./utils/latency_wrap",
+        help="Directory containing LatencyModel weights (default: ./utils/latency_wrap)",
     )
     parser.add_argument(
         "--load-model", type=str, default=None, help="Path to pre-trained model checkpoint to resume training"
@@ -378,19 +378,16 @@ def main():
         load_model_path=args.load_model,
     )
 
-    print(f"\n{'=' * 60}")
-    print("Training completed successfully!")
-    print(f"{'=' * 60}")
+    logger.info("Training completed successfully!")
     if model_path:
-        print(f"Model saved at: {model_path}")
-    print(f"Experiment directory: {experiment_dir}")
-    print("\nNext step: Transfer to physical hardware")
-    print("  python harness_physical.py \\")
-    print("    --agent_type=agent_r2d2 \\")
+        logger.info("Model saved at: %s", model_path)
+    logger.info("Experiment directory: %s", experiment_dir)
+    logger.info("Next step: Transfer to physical hardware")
+    logger.info("  python harness_physical.py \\")
+    logger.info("    --agent_type=agent_r2d2 \\")
     if model_path:
-        print(f"    --load_model={model_path} \\")
-    print("    --total_frames=500000")
-    print(f"{'=' * 60}\n")
+        logger.info("    --load_model=%s \\", model_path)
+    logger.info("    --total_frames=500000")
 
 
 if __name__ == "__main__":

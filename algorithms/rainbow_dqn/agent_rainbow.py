@@ -2,22 +2,16 @@ from __future__ import annotations
 
 import math
 import os
-import time
 from collections import deque
 from typing import Deque, Optional
 
-from mpmath.libmp.libelefun import atan_taylor_get_cached
 import numpy as np
 import torch
-from torch._inductor.ir import NoneAsConstantBuffer
 import torch.nn as nn
 import torch.nn.functional as F
 
 from vector_agents import VectorAgent
 from agent_utils import preprocess_batch
-
-# Noisy layers / prioritized replay
-
 
 class NoisyLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, sigma_init: float = 0.5):

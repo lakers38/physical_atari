@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from framework.Logger import logger
+
 
 class PriorityTree:
     """Sum tree for efficient prioritized sampling"""
@@ -147,10 +149,10 @@ class PriorityTree:
         if max_depth is not None:
             depth = min(depth, max_depth)
 
-        print(f"\nPriorityTree Display (capacity={self.capacity}, size={self.size})")
-        print(f"Total Priority: {self.total_priority():.{precision}f}")
-        print(f"Alpha: {self.alpha}, Beta: {self.beta}")
-        print("=" * 80)
+        logger.info("r2d2: PriorityTree Display capacity=%s size=%s", self.capacity, self.size)
+        logger.info("r2d2: Total Priority: %s", f"{self.total_priority():.{precision}f}")
+        logger.info("r2d2: Alpha: %s, Beta: %s", self.alpha, self.beta)
+        logger.info("r2d2: %s", "=" * 80)
 
         # Display level by level
         for level in range(depth):
@@ -178,10 +180,10 @@ class PriorityTree:
                 padding = (node_width - len(node_str)) // 2
                 level_str += " " * padding + node_str + " " * (node_width - padding - len(node_str))
 
-            print(f"Level {level}: {level_str}")
+            logger.info("r2d2: Level %s: %s", level, level_str)
 
-        print("=" * 80)
-        print("Leaf nodes are marked with [data_index] prefix\n")
+        logger.info("r2d2: %s", "=" * 80)
+        logger.info("r2d2: Leaf nodes are marked with [data_index] prefix")
 
     def display_compact(self, precision=2):
         """
@@ -190,25 +192,25 @@ class PriorityTree:
         Args:
             precision: Number of decimal places for values
         """
-        print(f"\nPriorityTree Compact View (capacity={self.capacity}, size={self.size})")
-        print(f"Total Priority: {self.total_priority():.{precision}f}")
-        print("=" * 80)
+        logger.info("r2d2: PriorityTree Compact View capacity=%s size=%s", self.capacity, self.size)
+        logger.info("r2d2: Total Priority: %s", f"{self.total_priority():.{precision}f}")
+        logger.info("r2d2: %s", "=" * 80)
 
         # Internal nodes (non-leaves)
-        print("Internal Nodes (cumulative sums):")
+        logger.info("r2d2: Internal Nodes (cumulative sums):")
         internal_nodes = []
         for i in range(self.capacity - 1):
             internal_nodes.append(f"[{i}]:{self.tree[i]:.{precision}f}")
-        print("  " + ", ".join(internal_nodes))
+        logger.info("r2d2: %s", "  " + ", ".join(internal_nodes))
 
         # Leaf nodes (actual data priorities)
-        print("\nLeaf Nodes (data priorities):")
+        logger.info("r2d2: Leaf Nodes (data priorities):")
         leaf_nodes = []
         for i in range(self.capacity):
             tree_idx = i + self.capacity - 1
             value = self.tree[tree_idx]
             if value > 0 or i < self.size:  # Only show non-zero or within size
                 leaf_nodes.append(f"data[{i}]:{value:.{precision}f}")
-        print("  " + ", ".join(leaf_nodes if leaf_nodes else ["(empty)"]))
+        logger.info("r2d2: %s", "  " + ", ".join(leaf_nodes if leaf_nodes else ["(empty)"]))
 
-        print("=" * 80 + "\n")
+        logger.info("r2d2: %s", "=" * 80)

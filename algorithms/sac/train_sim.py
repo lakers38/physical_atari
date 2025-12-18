@@ -35,6 +35,7 @@ import wandb
 from utils.latency_wrap.wrapper_v0_2 import LatencyModel
 
 from algorithms.sac.sac import ReplayBuffer, SACAgent
+from framework.Logger import logger
 
 gym.register_envs(ale_py)
 
@@ -117,14 +118,16 @@ class ActionSetWrapper(gym.Wrapper):
             self.action_mapping = None
         elif reduce_action_set == 2:
             self.action_mapping = [2, 5, 4, 3]
-            print(f"[ActionSetWrapper] Restricting {game_name} to 4 directional actions only")
+            logger.info("sac: ActionSetWrapper restricting %s to 4 directional actions only", game_name)
         else:
             self.action_mapping = None
 
         if self.action_mapping is not None:
             self.action_space = spaces.Discrete(len(self.action_mapping))
-            print(
-                f"[ActionSetWrapper] Action space reduced to {len(self.action_mapping)} actions: {self.action_mapping}"
+            logger.info(
+                "sac: ActionSetWrapper action space reduced to %s actions: %s",
+                len(self.action_mapping),
+                self.action_mapping,
             )
 
     def step(self, action):
@@ -152,7 +155,7 @@ class LatencyWrapper(gym.Wrapper):
         super().__init__(env)
         self.latency_model = LatencyModel(directory_with_weights=latency_model_dir)
         self.allowed_actions = None if allowed_actions is None else list(allowed_actions)
-        print(f"[LatencyWrapper] Initialized with weights from {latency_model_dir}")
+        logger.info("sac: LatencyWrapper initialized with weights from %s", latency_model_dir)
 
     def step(self, action):
         """
@@ -211,7 +214,7 @@ def create_single_atari_env(
     env = MaxAndSkipEnv(env, skip=4)
 
     if simulate_latency:
-        print(f"[sim_lat] Applying latency simulation to {env_name}")
+        logger.info("sac: Applying latency simulation to %s", env_name)
         env = LatencyWrapper(env, latency_model_dir, allowed_actions=allowed_actions)
 
     if reduce_action_set == 2:
@@ -223,7 +226,7 @@ def create_single_atari_env(
     env = RecordEpisodeStatistics(env)
 
     if video_path:
-        print(f"[Video] Recording videos every {video_freq} episodes to {video_path}")
+        logger.info("sac: Recording videos every %s episodes to %s", video_freq, video_path)
         env = RecordVideo(
             env,
             video_folder=video_path,
@@ -384,17 +387,23 @@ def train_loop(
             mean_value_next = np.mean(recent_value_next[-1000:])
             mean_alpha = np.mean(recent_alphas[-1000:])
 
-            print(
-                f"Step {step:,} | Ep: {episode_count} | "
-                f"Reward: {mean_reward:6.2f} (max:{max_reward:5.1f} min:{min_reward:5.1f}) | "
-                f"Len: {mean_length:5.1f} | "
-                f"Adv: {mean_advantage:6.3f}±{std_advantage:.3f} | "
-                f"Ent: {mean_entropy:.3f} | "
-                f"Alpha: {mean_alpha:.4f} | "
-                f"ValLoss: {mean_value_loss:.4f} | "
-                f"TotLoss: {mean_total_loss:.4f} | "
-                f"ActLoss: {mean_actor_loss:.4f} | "
-                f"FPS: {fps:5.1f}"
+            logger.info(
+                "sac: Step %s Ep %s Reward %.2f (max %.1f min %.1f) Len %.1f "
+                "Adv %.3f±%.3f Ent %.3f Alpha %.4f ValLoss %.4f TotLoss %.4f ActLoss %.4f FPS %.1f",
+                f"{step:,}",
+                episode_count,
+                mean_reward,
+                max_reward,
+                min_reward,
+                mean_length,
+                mean_advantage,
+                std_advantage,
+                mean_entropy,
+                mean_alpha,
+                mean_value_loss,
+                mean_total_loss,
+                mean_actor_loss,
+                fps,
             )
 
             tensorboard_writer.add_scalar("train/mean_reward_100ep", mean_reward, step)
@@ -439,12 +448,12 @@ def train_loop(
         if step % 10000 == 0 and step > 0:
             eval_reward = evaluate_agent(agent, eval_env, n_episodes=10)
             tensorboard_writer.add_scalar("eval/mean_reward", eval_reward, step)
-            print(f"  Eval @ {step:,}: {eval_reward:.2f}")
+            logger.info("sac: Eval @ %s: %.2f", f"{step:,}", eval_reward)
 
         if step % 50000 == 0 and step > 0:
             checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_{step}")
             agent.save(checkpoint_path)
-            print(f"  Checkpoint saved: {checkpoint_path}")
+            logger.info("sac: Checkpoint saved: %s", checkpoint_path)
 
     return agent
 
@@ -540,8 +549,7 @@ def train_agent(
             monitor_gym=True,
             save_code=True,
         )
-        print(f"[WandB] Initialized run: {wandb_run.name}")
-        print(f"[WandB] View at: {wandb_run.url}")
+        logger.info("sac: WandB initialized run=%s url=%s", wandb_run.name, wandb_run.url)
 
     video_path = os.path.join(experiment_dir, "videos") if record_videos else None
 
@@ -584,7 +592,7 @@ def train_agent(
     )
 
     if load_model_path and os.path.exists(load_model_path):
-        print(f"Loading pre-trained model from {load_model_path}")
+        logger.info("sac: Loading pre-trained model from %s", load_model_path)
         agent.load(load_model_path)
 
     replay_buffer = ReplayBuffer(
@@ -599,25 +607,20 @@ def train_agent(
     model_name = f"SAC_{env_name.replace('/', '_')}"
 
     mode_name = "sim_lat (with LatencyModel)" if simulate_latency else "sim (no latency)"
-    print(f"\n{'=' * 60}")
-    print(f"Starting Training: {mode_name}")
-    print(f"{'=' * 60}")
-    print(f"Environment: {env_name}")
-    print(f"Total timesteps: {total_timesteps:,}")
-    print(f"Device: {device}")
-    print(f"Learning rate (actor/CNN): {learning_rate}")
+    logger.info("Starting Training: %s", mode_name)
+    logger.info("Environment: %s", env_name)
+    logger.info("Total timesteps: %s", f"{total_timesteps:,}")
+    logger.info("Device: %s", device)
+    logger.info("Learning rate (actor/CNN): %s", learning_rate)
     if auto_entropy_tuning:
-        print(f"Auto entropy tuning: ENABLED (target entropy: {agent.target_entropy:.4f})")
+        logger.info("Auto entropy tuning: ENABLED (target entropy: %.4f)", agent.target_entropy)
     else:
-        print(f"Entropy coef (fixed): {entropy_coef}")
-    print(f"Replay buffer size: {buffer_size} | Batch size: {batch_size}")
-    print(
-        f"Learning starts after: {learning_starts} steps | Train freq: {train_freq} | Gradient steps: {gradient_steps}"
-    )
-    print(f"Gamma: {gamma}")
+        logger.info("Entropy coef (fixed): %s", entropy_coef)
+    logger.info("Replay buffer size: %s | Batch size: %s", buffer_size, batch_size)
+    logger.info("Learning starts after: %s steps | Train freq: %s | Gradient steps: %s", learning_starts, train_freq, gradient_steps)
+    logger.info("Gamma: %s", gamma)
     if use_wandb and wandb_run:
-        print(f"WandB: {wandb_run.url}")
-    print(f"{'=' * 60}\n")
+        logger.info("WandB: %s", wandb_run.url)
 
     train_loop(
         agent=agent,
@@ -637,7 +640,7 @@ def train_agent(
 
     final_path = os.path.join(experiment_dir, "models", "final_model")
     agent.save(final_path)
-    print(f"\nTraining complete! Model saved to: {final_path}")
+    logger.info("sac: Training complete! Model saved to: %s", final_path)
 
     writer.close()
     env.close()
@@ -645,7 +648,7 @@ def train_agent(
 
     if use_wandb and wandb_run is not None:
         wandb_run.finish()
-        print("[WandB] Run finished and uploaded")
+        logger.info("sac: WandB run finished and uploaded")
 
     return agent, final_path
 
@@ -663,10 +666,10 @@ def main():
         type=str,
         default="sim_lat",
         choices=["sim", "sim_lat"],
-        help="Training mode: sim (no latency) or sim_lat (with LatencyModel, default)",
+        help="Training mode: sim (no latency) or sim_lat (with LatencyModel) (default: sim_lat)",
     )
     parser.add_argument(
-        "--latency-model-dir", type=str, default="./latency_wrap", help="Directory containing LatencyModel weights"
+        "--latency-model-dir", type=str, default="./utils/latency_wrap", help="Directory containing LatencyModel weights"
     )
     parser.add_argument("--output-dir", type=str, default="outputs/sac/", help="Base directory for outputs")
     parser.add_argument(
@@ -687,7 +690,7 @@ def main():
     )
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for critic (default: 0.99)")
     parser.add_argument("--buffer-size", type=int, default=100_000, help="Replay buffer size (default: 100k)")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for updates (default: 256)")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for updates (default: 32)")
     parser.add_argument(
         "--learning-starts", type=int, default=1_000, help="Steps to collect before starting updates (default: 1,000)"
     )
@@ -699,7 +702,7 @@ def main():
     parser.add_argument("--input-size", type=int, default=128, help="Input image size (default: 128)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
     parser.add_argument("--no-videos", action="store_true", help="Disable video recording (default: videos enabled)")
-    parser.add_argument("--video-freq", type=int, default=30, help="Record video every N episodes (default: 50)")
+    parser.add_argument("--video-freq", type=int, default=30, help="Record video every N episodes (default: 30)")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument(
         "--wandb-project", type=str, default="physical-atari", help="WandB project name (default: physical-atari)"
@@ -786,14 +789,11 @@ def main():
         auto_entropy_tuning=not args.no_auto_entropy_tuning,
     )
 
-    print(f"\n{'=' * 60}")
-    print("Training completed successfully!")
-    print(f"{'=' * 60}")
-    print(f"Model saved at: {model_path}")
-    print(f"Experiment directory: {experiment_dir}")
-    print("View training progress:")
-    print(f"  tensorboard --logdir {os.path.join(experiment_dir, 'logs', 'tensorboard')}")
-    print(f"{'=' * 60}\n")
+    logger.info("Training completed successfully!")
+    logger.info("Model saved at: %s", model_path)
+    logger.info("Experiment directory: %s", experiment_dir)
+    logger.info("View training progress:")
+    logger.info("  tensorboard --logdir %s", os.path.join(experiment_dir, 'logs', 'tensorboard'))
 
 
 if __name__ == "__main__":

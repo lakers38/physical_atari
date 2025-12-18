@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
-"""
-Comprehensive test script for R2D2 Actor components
-Tests each component in isolation before full integration
-"""
-
-import os
-import sys
+"""Manual tests for R2D2 actor components."""
 
 import numpy as np
 import torch
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from r2d2 import config
-from r2d2.actor import Actor, LocalBuffer
-from r2d2.environment import create_env
-from r2d2.model import AgentState, Network
+from algorithms.r2d2.actor import LocalBuffer
+from algorithms.r2d2.environment import create_env
+from algorithms.r2d2.model import AgentState, Network
 
 
 def test_environment():

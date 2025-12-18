@@ -1,6 +1,10 @@
+# The original LatencyModel was shared/written by Khurram Javed
+# Our contribution is BatchedLatencyModel which parallelizes 
+# this for vectorized environments
+
 import numpy as np
 import ale_py
-import base64, gzip, sys, io
+import base64, gzip, io
 
 class BatchedLatencyModel:
     """

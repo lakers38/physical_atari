@@ -9,6 +9,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from . import config
 from .priority_tree import PriorityTree
+from framework.Logger import logger
 
 
 @dataclass
@@ -95,9 +96,9 @@ class ReplayBuffer:
         log_interval = config.log_interval
 
         while True:
-            print(f'buffer size: {self.size}')
+            logger.info("r2d2: buffer size: %s", self.size)
             self.last_size = self.size
-            print(f'number of environment steps: {self.env_steps}')
+            logger.info("r2d2: number of environment steps: %s", self.env_steps)
 
             stats = {
                 'buffer/size': self.size,
@@ -107,27 +108,26 @@ class ReplayBuffer:
 
             if self.num_episodes != 0:
                 avg_episode_reward = self.episode_reward / self.num_episodes
-                print(f'average episode return: {avg_episode_reward:.4f}')
+                logger.info("r2d2: average episode return: %.4f", avg_episode_reward)
                 stats['env/episode_reward'] = avg_episode_reward
                 stats['env/num_episodes'] = self.num_episodes
                 self.episode_reward = 0
                 self.num_episodes = 0
 
-            print(f'number of training steps: {self.training_steps}')
+            logger.info("r2d2: number of training steps: %s", self.training_steps)
             training_speed = (self.training_steps - self.last_training_steps) / log_interval
-            print(f'training speed: {training_speed}/s')
+            logger.info("r2d2: training speed: %.3f/s", training_speed)
             stats['train/steps_per_second'] = training_speed
             env_steps_trained = self.sampled_env_steps - self.last_sampled_env_steps
-            print(f'env steps trained last period: {env_steps_trained}')
+            logger.info("r2d2: env steps trained last period: %s", env_steps_trained)
             stats['train/env_steps_used_last_period'] = env_steps_trained
             self.last_sampled_env_steps = self.sampled_env_steps
 
             if self.training_steps != self.last_training_steps:
                 avg_loss = self.sum_loss / (self.training_steps - self.last_training_steps)
-                print(f'loss: {avg_loss:.6f}')
+                logger.info("r2d2: loss: %.6f", avg_loss)
                 self.last_training_steps = self.training_steps
                 self.sum_loss = 0
-            print()
 
             if not self.stats_queue.full():
                 self.stats_queue.put(stats)

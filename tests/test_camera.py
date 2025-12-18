@@ -13,13 +13,10 @@
 # limitations under the License.
 
 import json
-import os
-import sys
 import time
 
 import cv2
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 from framework.CameraDevice_v4l2 import CameraDevice_v4l2 as CameraDevice
 
 

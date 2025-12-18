@@ -1,5 +1,4 @@
 import os
-import time
 from collections import deque
 
 import cv2

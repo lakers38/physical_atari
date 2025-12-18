@@ -12,7 +12,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["utils*"]
+include = ["algorithms*", "framework*", "utils*"]
 
 [tool.setuptools.package-data]
 "utils.latency_wrap" = ["*.npy"]

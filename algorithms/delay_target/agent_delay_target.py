@@ -28,6 +28,8 @@ import torch.nn.functional as F
 from ale_py import Action, ALEInterface, LoggerMode, roms
 from pynvml import *
 
+from framework.Logger import logger
+
 
 def train_function(
     # constants
@@ -364,12 +366,12 @@ class cuda_graph_wrapper:
             torch.cuda.current_stream().wait_stream(self.stream)
         else:
             # capture the graph -- doesn't actually execute it
-            print('capture start')
+            logger.info("delay_target: cuda graph capture start")
             torch.cuda.synchronize()  # EVERYTHING must be synchronized before graph capture
             self.cuda_graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(self.cuda_graph, stream=self.stream):
                 self.func(*self.args)
-            print('capture stop')
+            logger.info("delay_target: cuda graph capture stop")
             # use the graph capture
             self.stream.wait_stream(torch.cuda.current_stream())
             self.cuda_graph.replay()
@@ -486,9 +488,9 @@ class Agent:
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
 
-        print('torch version: ', torch.__version__)
-        print('cuda version : ', torch.version.cuda)
-        print('dev          : ', self.dev)
+        logger.info("delay_target: torch version: %s", torch.__version__)
+        logger.info("delay_target: cuda version: %s", torch.version.cuda)
+        logger.info("delay_target: dev: %s", self.dev)
 
         # if this isn't done, pytorch seems to use 3-9 cores worth of time per process
         # just to busy wait, such that trying to run 8 processes was getting CPU bound.
@@ -621,18 +623,23 @@ class Agent:
                 dirac=self.use_dirac,
                 kernel_size=self.kernel_size,
             )
-        print(self.training_model)
-        print('parameters: ', model_parameter_count(self.training_model))
+        logger.info("delay_target: training_model=%s", self.training_model)
+        logger.info("delay_target: parameters=%s", model_parameter_count(self.training_model))
 
         if self.load_file is not None:
-            print(f'Loading checkpoint from: {self.load_file}')
+            logger.info("delay_target: Loading checkpoint from: %s", self.load_file)
             checkpoint = torch.load(self.load_file, weights_only=True)
             self.training_model.load_state_dict(checkpoint)
-            print(f'Checkpoint loaded successfully! Model has {len(checkpoint)} state dict entries')
+            logger.info("delay_target: Checkpoint loaded successfully (state dict entries=%s)", len(checkpoint))
             # Print a sample of weights to verify they're not random/zero
             first_param_name = list(checkpoint.keys())[0]
             first_param = checkpoint[first_param_name]
-            print(f'Sample weights from {first_param_name}: mean={first_param.float().mean():.6f}, std={first_param.float().std():.6f}')
+            logger.info(
+                "delay_target: Sample weights %s mean=%.6f std=%.6f",
+                first_param_name,
+                first_param.float().mean().item(),
+                first_param.float().std().item(),
+            )
 
         self.training_model.to(dtype=fmt)
         self.training_model.train()
@@ -925,14 +932,14 @@ def main():
         else:
             action_set = ale.getMinimalActionSet()
     num_actions = len(action_set)
-    print(f'{num_actions} actions: {action_set}')
+    logger.info(f'{num_actions} actions: {action_set}')
 
     name = f'delay_{game}{delay_frames}'
     for k, v in parms.items():
         if k != 'gpu':
             name += '_'
             name += str(v)
-    print(name)
+    logger.info(name)
 
     agent = Agent(data_dir, seed, num_actions, total_frames, **parms)
 
@@ -962,7 +969,7 @@ def main():
         if save_incremental_models and (u + 1) // 500_000 != last_model_save:
             last_model_save = (u + 1) // 500_000
             filename = f'{data_dir}/{name}_{u + 1}.model'
-            print('writing ' + filename)
+            logger.info('writing ' + filename)
             agent.save_model(filename)
 
         # fill in our average score graph so we get exactly 1000 points on it
@@ -1015,7 +1022,7 @@ def main():
         if ale.game_over() or frames_without_reward == max_frames_without_reward:
             torch.cuda.synchronize()
             if frames_without_reward == max_frames_without_reward:
-                print(f'terminated at {frames_without_reward} frames without reward')
+                logger.warning(f'terminated at {frames_without_reward} frames without reward')
             episode_number = ((episode_number // 100) + 1) * 100
             end_of_episode = 1
             torch.cuda.nvtx.range_push("reset")
@@ -1034,7 +1041,7 @@ def main():
             frames_per_second = frames / (now - environment_start_time)
             environment_start_time = now
 
-            print(
+            logger.info(
                 f'{rank}:{name} frame:{u:7} {frames_per_second:4.0f}/s eps {len(episode_scores) - 1:3},{frames:5}={int(episode_scores[-1]):5} err {agent.avg_error_ema:.1f} {agent.max_error_ema:.1f} loss {agent.train_loss_ema:.1f} targ {agent.target_ema:.1f} avg {avg:4.1f}'
             )
 
@@ -1043,15 +1050,15 @@ def main():
         taken_action = agent.frame(ale.getScreenRGB(), reward, end_of_episode)
 
     filename = data_dir + '/' + name + '.policy_actions'
-    print('writing ' + filename)
+    logger.info('writing ' + filename)
     agent.policy_actions_buffer.cpu().numpy().tofile(filename)
 
     filename = data_dir + '/' + name + '.score'
-    print('writing ' + filename)
+    logger.info('writing ' + filename)
     episode_graph.cpu().numpy().tofile(filename)
 
     filename = data_dir + '/' + name + '.parms'
-    print('writing ' + filename)
+    logger.info('writing ' + filename)
     parms_graph.cpu().numpy().tofile(filename)
 
     plots = torch.zeros(len(episode_scores), 2)
@@ -1059,19 +1066,19 @@ def main():
         plots[i][0] = episode_end[i]
         plots[i][1] = episode_scores[i]
     filename = data_dir + '/' + name + '.scatter'
-    print('writing ' + filename)
+    logger.info('writing ' + filename)
     plots.cpu().numpy().tofile(filename)
 
     filename = data_dir + '/' + name + '.loss'
-    print('writing ' + filename)
+    logger.info('writing ' + filename)
     torch.tensor(agent.train_losses).cpu().numpy().tofile(filename)
 
     if save_model:
         filename = f'{data_dir}/{name}.model'
-        print('writing ' + filename)
+        logger.info('writing ' + filename)
         agent.save_model(filename)
 
-    print('done')
+    logger.info('done')
 
 
 if __name__ == '__main__':
