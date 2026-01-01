@@ -8,6 +8,9 @@
 - Double Q-learning
 - Prioritized experience replay
 - Dueling network architecture
+- Distributional Learning
+- Noisy Nets
+- Mult-step Returns
 
 **Why Rainbow:** Combines six orthogonal DQN improvements into a single agent.
 
