@@ -4,10 +4,6 @@
 
 **Type:** Off-policy Q-learning adapted for hardware latency
 
-**Key Features:**
-
-**Why Delay Target:** 
-
 ## Training in Simulation
 
 Requires latency simulation:
